@@ -3,6 +3,7 @@ services:
     name: rpa-elaw-anima
     runtime: docker
     dockerfilePath: ./Dockerfile
+    timeoutSeconds: 300
     envVars:
       - key: PYTHONIOENCODING
         value: utf-8

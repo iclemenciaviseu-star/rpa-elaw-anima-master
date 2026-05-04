@@ -407,12 +407,16 @@ file2.addEventListener('change', e => {
 async function handleZip(f) {
   document.getElementById('drop2-icon').textContent = '...';
   document.getElementById('drop2-title').textContent = 'Enviando...';
-  document.getElementById('drop2-sub').textContent = f.name;
+  const sizeMb = (f.size / 1024 / 1024).toFixed(1);
+  document.getElementById('drop2-sub').textContent = f.name + ' — ' + sizeMb + ' MB — aguarde...';
   document.getElementById('next2').disabled = true;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 180_000);
   try {
     const fd = new FormData();
     fd.append('file', f);
-    const res = await fetch('/api/upload-pdfs', { method: 'POST', body: fd });
+    const res = await fetch('/api/upload-pdfs', { method: 'POST', body: fd, signal: controller.signal });
+    clearTimeout(timeout);
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
     state.pdfFolder = data;
@@ -427,7 +431,11 @@ async function handleZip(f) {
     document.getElementById('fs-total').textContent = data.total;
     document.getElementById('next2').disabled = false;
   } catch (err) {
-    alert('Erro ao enviar ZIP: ' + err.message);
+    clearTimeout(timeout);
+    const msg = err.name === 'AbortError'
+      ? 'Tempo esgotado (> 3 min). O ZIP pode ser demasiado grande — tente dividir em ZIPs menores.'
+      : 'Erro ao enviar ZIP: ' + err.message;
+    alert(msg);
     document.getElementById('drop2-icon').textContent = '+';
     document.getElementById('drop2-title').textContent = 'Clique ou arraste o ZIP aqui';
     document.getElementById('drop2-sub').textContent = '.zip com os PDFs dos processos';

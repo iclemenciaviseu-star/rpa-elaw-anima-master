@@ -110,19 +110,11 @@ async def upload_pdfs(file: UploadFile = File(...)):
     zip_path = UPLOADS / f"pdfs_{session_id}.zip"
     extract_dir = UPLOADS / f"pdfs_{session_id}"
 
-    with open(zip_path, "wb") as f:
-        while chunk := await file.read(1024 * 1024):
-            f.write(chunk)
+    contents = await file.read()
+    await asyncio.to_thread(zip_path.write_bytes, contents)
 
     try:
-        extract_dir.mkdir(exist_ok=True)
-        with zipfile.ZipFile(zip_path, "r") as z:
-            for member in z.infolist():
-                # segurança: ignora path traversal
-                if ".." in member.filename or member.filename.startswith("/"):
-                    continue
-                z.extract(member, extract_dir)
-        zip_path.unlink(missing_ok=True)
+        await asyncio.to_thread(_extract_zip, zip_path, extract_dir)
     except Exception as e:
         zip_path.unlink(missing_ok=True)
         shutil.rmtree(extract_dir, ignore_errors=True)
@@ -137,6 +129,16 @@ async def upload_pdfs(file: UploadFile = File(...)):
         "total": len(pdfs) + len(zips),
         "session_id": session_id,
     }
+
+
+def _extract_zip(zip_path: Path, extract_dir: Path):
+    extract_dir.mkdir(exist_ok=True)
+    with zipfile.ZipFile(zip_path, "r") as z:
+        for member in z.infolist():
+            if ".." in member.filename or member.filename.startswith("/"):
+                continue
+            z.extract(member, extract_dir)
+    zip_path.unlink(missing_ok=True)
 
 
 AUTH_STATE = BASE / "auth_state.json"
