@@ -1,0 +1,722 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ELAW · Automação de Agendamentos</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#151922; --panel-2:#1b2030;
+    --border:#2a3142; --muted:#6f7689; --text:#dbe1ea; --soft:#a3abbd;
+    --accent:#3b82f6; --accent-2:#60a5fa;
+    --ok:#22c55e; --warn:#f59e0b; --err:#ef4444;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;}
+  body{display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;min-height:100vh;}
+  .wrap{width:100%;max-width:640px;transition:max-width .3s;}
+  .wrap.wide{max-width:900px}
+  .card{background:var(--panel);border:1px solid var(--border);
+    border-radius:16px;padding:28px 28px 24px;box-shadow:0 10px 40px rgba(0,0,0,.4);}
+  .head{display:flex;gap:12px;align-items:center;margin-bottom:18px;}
+  .logo{width:40px;height:40px;border-radius:10px;display:flex;align-items:center;
+    justify-content:center;background:linear-gradient(135deg,#3b82f6,#2563eb);
+    color:#fff;font-weight:700;letter-spacing:.5px;font-size:13px;}
+  .title{font-size:17px;font-weight:600}
+  .subtitle{font-size:13px;color:var(--muted);margin-top:2px}
+  .steps{display:flex;align-items:center;gap:0;margin:14px 0 24px;}
+  .dot{width:28px;height:28px;border-radius:50%;border:1px solid var(--border);
+    background:var(--panel-2);color:var(--muted);display:flex;align-items:center;
+    justify-content:center;font-size:12px;font-weight:600;flex:0 0 auto;
+    transition:all .25s;}
+  .dot.active{border-color:var(--accent);color:#fff;
+    box-shadow:0 0 0 4px rgba(59,130,246,.15)}
+  .dot.done{background:var(--accent);border-color:var(--accent);color:#fff}
+  .bar{flex:1;height:1px;background:var(--border);margin:0 6px;position:relative;}
+  .bar.done::after{content:"";position:absolute;inset:0;background:var(--accent);}
+  .step-label{font-size:11px;letter-spacing:.12em;color:var(--muted);
+    text-transform:uppercase;margin-bottom:6px;font-weight:600}
+  h2{font-size:22px;margin:0 0 6px;font-weight:600;letter-spacing:-.01em}
+  p.lead{color:var(--soft);font-size:14px;line-height:1.55;margin:0 0 18px;}
+  .drop{border:1.5px dashed var(--border);background:var(--panel-2);
+    border-radius:12px;padding:34px 20px;text-align:center;cursor:pointer;
+    transition:border-color .2s, background .2s;}
+  .drop:hover, .drop.hover{border-color:var(--accent);background:rgba(59,130,246,.06)}
+  .drop .icon{font-size:28px;margin-bottom:10px;opacity:.8}
+  .drop .big{font-weight:600;font-size:15px;color:var(--text)}
+  .drop .sm{font-size:12px;color:var(--muted);margin-top:6px}
+  .drop.filled{border-style:solid;border-color:var(--ok);background:rgba(34,197,94,.05)}
+  .drop.filled .icon{color:var(--ok)}
+  .hint{margin-top:12px;font-family:var(--mono);font-size:11.5px;color:var(--muted);}
+  .hint b{color:var(--warn);font-weight:600}
+  .field{margin-bottom:14px}
+  .field label{display:block;font-size:12.5px;font-weight:600;margin-bottom:6px;color:var(--soft)}
+  input[type=text],input[type=password]{width:100%;padding:11px 12px;
+    background:var(--panel-2);border:1px solid var(--border);border-radius:9px;
+    color:var(--text);font-size:14px;font-family:inherit;outline:none;
+    transition:border-color .2s;}
+  input:focus{border-color:var(--accent)}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  .chk{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--soft);
+    cursor:pointer;user-select:none;}
+  .chk input{width:15px;height:15px;accent-color:var(--accent)}
+  .actions{display:flex;justify-content:space-between;gap:8px;margin-top:22px;
+    padding-top:18px;border-top:1px solid var(--border);}
+  .btn{padding:10px 18px;border-radius:9px;border:1px solid var(--border);
+    background:var(--panel-2);color:var(--text);font-size:14px;font-weight:500;
+    cursor:pointer;transition:all .15s;font-family:inherit;}
+  .btn:hover{background:#222836}
+  .btn:disabled{opacity:.45;cursor:not-allowed}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;}
+  .btn.primary:hover{background:var(--accent-2)}
+  .btn.danger{background:transparent;border-color:var(--err);color:var(--err)}
+  .btn.ghost{background:transparent}
+  .stat{display:grid;gap:10px;margin-top:14px;}
+  .stat.cols3{grid-template-columns:repeat(3,1fr);}
+  .stat.cols4{grid-template-columns:repeat(4,1fr);}
+  .stat div.kpi{background:var(--panel-2);border:1px solid var(--border);
+    border-radius:10px;padding:12px 14px;}
+  .stat .k{font-size:11px;color:var(--muted);text-transform:uppercase;
+    letter-spacing:.06em;font-weight:600}
+  .stat .v{font-size:22px;font-weight:600;margin-top:3px;letter-spacing:-.01em}
+  .stat .kpi.ok  .v{color:var(--ok)}
+  .stat .kpi.err .v{color:var(--err)}
+  .stat .kpi.time .v{font-family:var(--mono);font-size:18px}
+  .missing{margin-top:10px;padding:10px 12px;background:rgba(239,68,68,.08);
+    border:1px solid rgba(239,68,68,.25);border-radius:9px;font-size:12.5px;color:#fca5a5}
+  .progress{height:8px;background:var(--panel-2);border-radius:999px;
+    overflow:hidden;margin-top:14px;border:1px solid var(--border);}
+  .progress > div{height:100%;background:linear-gradient(90deg,#3b82f6,#60a5fa);
+    width:0%;transition:width .35s ease;}
+  .tbl-wrap{margin-top:14px;border:1px solid var(--border);border-radius:10px;
+    overflow:hidden;background:var(--panel-2);}
+  .tbl-head{display:grid;grid-template-columns:40px 1fr 100px 1.3fr;
+    padding:10px 14px;font-size:11px;text-transform:uppercase;letter-spacing:.06em;
+    color:var(--muted);font-weight:600;background:#11141c;border-bottom:1px solid var(--border);}
+  .tbl-body{max-height:300px;overflow-y:auto;}
+  .tbl-row{display:grid;grid-template-columns:40px 1fr 100px 1.3fr;
+    padding:10px 14px;font-size:12.5px;border-bottom:1px solid var(--border);
+    align-items:center;animation:slide .2s ease-out;}
+  .tbl-row:last-child{border-bottom:none}
+  .tbl-row .n{color:var(--muted);font-family:var(--mono);font-size:11.5px}
+  .tbl-row .proc{font-family:var(--mono);font-size:12px;color:var(--text);
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .tbl-row .st{font-weight:600;font-size:12px}
+  .tbl-row .st.run{color:var(--accent-2)}
+  .tbl-row .st.ok {color:var(--ok)}
+  .tbl-row .st.err{color:var(--err)}
+  .tbl-row .msg{color:var(--muted);font-size:12px;overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap}
+  @keyframes slide{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:none}}
+  .empty{padding:30px 14px;text-align:center;color:var(--muted);font-size:13px}
+  .collapse{margin-top:14px;border:1px solid var(--border);border-radius:10px;
+    overflow:hidden;background:var(--panel-2);}
+  .collapse summary{padding:10px 14px;font-size:13px;font-weight:600;
+    color:var(--soft);cursor:pointer;user-select:none;list-style:none;
+    display:flex;align-items:center;gap:8px}
+  .collapse summary::before{content:">";font-size:10px;transition:transform .2s;}
+  .collapse[open] summary::before{transform:rotate(90deg)}
+  .console{height:240px;background:#08090d;padding:12px;overflow-y:auto;
+    font-family:var(--mono);font-size:12px;line-height:1.55;
+    white-space:pre-wrap;word-break:break-word;border-top:1px solid var(--border);}
+  .console .l-info{color:#c9cfdb}
+  .console .l-success{color:#86efac}
+  .console .l-warn{color:#fbbf24}
+  .console .l-error{color:#fca5a5}
+  .console .ts{color:#6b7280;margin-right:6px}
+  .done-banner{padding:14px 16px;border-radius:10px;margin-top:14px;
+    font-size:14px;display:flex;gap:10px;align-items:center}
+  .done-banner.ok{background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.3);color:#86efac}
+  .done-banner.err{background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.3);color:#fca5a5}
+  .done-banner.warn{background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.3);color:#fbbf24}
+  .view{display:none}
+  .view.active{display:block;animation:fade .25s ease-out}
+  @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+</style>
+</head>
+<body>
+<div class="wrap" id="wrap">
+  <div class="card">
+    <div class="head">
+      <div class="logo">EL</div>
+      <div>
+        <div class="title">ELAW · Automação de Agendamentos</div>
+        <div class="subtitle">anima.elaw.com.br · Complemento de Cadastro (Judicial)</div>
+      </div>
+    </div>
+
+    <div class="steps">
+      <div class="dot active" data-step="1">1</div><div class="bar"></div>
+      <div class="dot" data-step="2">2</div><div class="bar"></div>
+      <div class="dot" data-step="3">3</div><div class="bar"></div>
+      <div class="dot" data-step="4">4</div><div class="bar"></div>
+      <div class="dot" data-step="5">5</div>
+    </div>
+
+    <div class="view active" data-view="1">
+      <div class="step-label">Passo 1 de 5</div>
+      <h2>Base de casos</h2>
+      <p class="lead">Carregue a planilha com a relação de processos.</p>
+      <div class="drop" id="drop1">
+        <div class="icon" id="drop1-icon">+</div>
+        <div class="big" id="drop1-title">Clique ou arraste o arquivo aqui</div>
+        <div class="sm" id="drop1-sub">.xlsx · .xls · .csv</div>
+        <input type="file" id="file1" accept=".xlsx,.xls,.csv" hidden />
+      </div>
+      <div id="preview1" style="display:none">
+        <div class="stat cols3">
+          <div class="kpi"><div class="k">Linhas</div><div class="v" id="pv-rows">-</div></div>
+          <div class="kpi"><div class="k">Colunas</div><div class="v" id="pv-cols">-</div></div>
+          <div class="kpi"><div class="k">Status</div><div class="v" id="pv-status">-</div></div>
+        </div>
+        <div id="pv-missing"></div>
+      </div>
+      <div class="hint">Formatos aceitos: .xlsx, .xls, .csv. Cabeçalho detectado automaticamente.</div>
+      <div class="actions">
+        <div></div>
+        <button class="btn primary" id="next1" disabled>Próximo</button>
+      </div>
+    </div>
+
+    <div class="view" data-view="2">
+      <div class="step-label">Passo 2 de 5</div>
+      <h2>Documentos (PDFs)</h2>
+      <p class="lead">Faça upload de um ZIP com todos os PDFs dos processos. Os arquivos devem conter o número do processo no nome.</p>
+      <div class="drop" id="drop2">
+        <div class="icon" id="drop2-icon">+</div>
+        <div class="big" id="drop2-title">Clique ou arraste o ZIP aqui</div>
+        <div class="sm" id="drop2-sub">.zip com os PDFs dos processos</div>
+        <input type="file" id="file2" accept=".zip" hidden />
+      </div>
+      <div id="folderStat" style="display:none">
+        <div class="stat cols3">
+          <div class="kpi"><div class="k">PDFs</div><div class="v" id="fs-pdf">-</div></div>
+          <div class="kpi"><div class="k">ZIPs</div><div class="v" id="fs-zip">-</div></div>
+          <div class="kpi"><div class="k">Total</div><div class="v" id="fs-total">-</div></div>
+        </div>
+      </div>
+      <div class="hint">Dica: selecione os PDFs no Explorer → botão direito → Enviar para → Pasta compactada.</div>
+      <div class="actions">
+        <button class="btn" data-back="1">Voltar</button>
+        <button class="btn primary" id="next2" disabled>Próximo</button>
+      </div>
+    </div>
+
+    <div class="view" data-view="3">
+      <div class="step-label">Passo 3 de 5</div>
+      <h2>Credenciais do eLaw</h2>
+
+      <div id="authStateBox" style="border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:14px;background:var(--panel-2)">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+          <span style="font-weight:600;font-size:14px">Sessão salva (auth_state.json)</span>
+          <span id="authBadge" style="font-size:11px;padding:2px 8px;border-radius:20px;background:#e8f5e9;color:#2e7d32;display:none">✓ carregada</span>
+        </div>
+        <p style="margin:0 0 8px;font-size:13px;color:var(--muted)">Se outra pessoa já gerou o arquivo de sessão com <code>save_auth.py</code>, carregue aqui e os campos abaixo ficam opcionais.</p>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <label class="btn" style="cursor:pointer;font-size:13px;padding:6px 14px">
+            Carregar auth_state.json
+            <input type="file" id="authFile" accept=".json" style="display:none" />
+          </label>
+          <span id="authFileName" style="font-size:12px;color:var(--muted)"></span>
+          <button id="authDeleteBtn" style="display:none;background:none;border:none;color:#c62828;cursor:pointer;font-size:12px">✕ remover</button>
+        </div>
+      </div>
+
+      <p class="lead" style="margin-top:0">Credenciais para login SSO (obrigatório se não houver sessão salva).</p>
+      <div class="field"><label>Usuário eLaw</label>
+        <input type="text" id="usuario" placeholder="seu.usuario" autocomplete="off" /></div>
+      <div class="field"><label>Senha</label>
+        <input type="password" id="senha" autocomplete="off" /></div>
+      <div class="field"><label>Email Microsoft <span style="color:var(--muted);font-weight:400">(SSO — ex: usuario@viseuadvogados.com.br)</span></label>
+        <input type="email" id="microsoftEmail" placeholder="usuario@dominio.com.br" autocomplete="off" /></div>
+      <div class="row2">
+        <div class="field"><label>Linha inicial</label>
+          <input type="text" id="inicio" value="2" /></div>
+        <div class="field"><label>Linha final <span style="color:var(--muted);font-weight:400">(vazio = todas)</span></label>
+          <input type="text" id="fim" placeholder="todas" /></div>
+      </div>
+      <label class="chk" style="margin-top:6px">
+        <input type="checkbox" id="headless" /> Rodar em background (headless)
+      </label>
+      <label class="chk" style="margin-top:8px">
+        <input type="checkbox" id="preservar" checked /> Preservar campos já preenchidos (não sobrescrever)
+      </label>
+      <div class="actions">
+        <button class="btn" data-back="2">Voltar</button>
+        <button class="btn primary" id="next3" disabled>Próximo</button>
+      </div>
+    </div>
+
+    <div class="view" data-view="4">
+      <div class="step-label">Passo 4 de 5</div>
+      <h2>Revisão</h2>
+      <p class="lead">Confira os dados antes de iniciar.</p>
+      <div class="stat cols3">
+        <div class="kpi"><div class="k">Casos a processar</div><div class="v" id="rv-rows">-</div></div>
+        <div class="kpi"><div class="k">PDFs disponíveis</div><div class="v" id="rv-pdfs">-</div></div>
+        <div class="kpi"><div class="k">Intervalo</div><div class="v" id="rv-range">-</div></div>
+      </div>
+      <div style="margin-top:14px;padding:12px 14px;background:var(--panel-2);
+        border:1px solid var(--border);border-radius:10px;font-size:13px;line-height:1.8;">
+        <div><span style="color:var(--muted)">Planilha:</span> <span id="rv-file" style="font-family:var(--mono);font-size:12px"></span></div>
+        <div><span style="color:var(--muted)">ZIP de PDFs:</span> <span id="rv-folder" style="font-family:var(--mono);font-size:12px"></span></div>
+        <div><span style="color:var(--muted)">Usuário:</span> <span id="rv-user" style="font-family:var(--mono);font-size:12px"></span></div>
+        <div><span style="color:var(--muted)">Modo:</span> <span id="rv-mode"></span></div>
+        <div><span style="color:var(--muted)">Preservação:</span> <span id="rv-preserv"></span></div>
+      </div>
+      <div class="actions">
+        <button class="btn" data-back="3">Voltar</button>
+        <button class="btn primary" id="startBtn">Iniciar RPA</button>
+      </div>
+    </div>
+
+    <div class="view" data-view="5">
+      <div class="step-label">Passo 5 de 5</div>
+      <h2 id="dashTitle">Executando...</h2>
+      <p class="lead" id="dashLead">Acompanhe o progresso em tempo real. Cada caso aparece na tabela abaixo conforme é processado.</p>
+      <div class="stat cols4">
+        <div class="kpi"><div class="k">Total</div><div class="v" id="kTotal">-</div></div>
+        <div class="kpi ok"><div class="k">Sucesso</div><div class="v" id="kOk">0</div></div>
+        <div class="kpi err"><div class="k">Erros</div><div class="v" id="kErr">0</div></div>
+        <div class="kpi time"><div class="k">Tempo</div><div class="v" id="kTime">00:00</div></div>
+      </div>
+      <div class="progress"><div id="progBar"></div></div>
+      <div class="tbl-wrap">
+        <div class="tbl-head"><div>#</div><div>Processo</div><div>Status</div><div>Detalhe</div></div>
+        <div class="tbl-body" id="tblBody">
+          <div class="empty" id="tblEmpty">Aguardando início...</div>
+        </div>
+      </div>
+      <details class="collapse">
+        <summary>Ver log bruto</summary>
+        <div class="console" id="console"></div>
+      </details>
+      <div id="doneBanner" style="display:none"></div>
+      <div class="actions">
+        <button class="btn ghost" id="backBtn">Voltar</button>
+        <div style="display:flex;gap:8px">
+          <button class="btn danger" id="stopBtn" style="display:none">Parar</button>
+          <button class="btn" id="exportBtn" style="display:none">Exportar CSV</button>
+          <button class="btn primary" id="restartBtn" style="display:none">Executar novamente</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="text-align:center;color:var(--muted);font-size:11.5px;margin-top:14px">
+    anima.elaw.com.br · Viseu Advogados
+  </div>
+</div>
+
+<script>
+const state = {
+  step: 1, spreadsheet: null, pdfFolder: null, pdfZipName: null,
+  job: null, startedAt: null, timerInt: null,
+  cases: new Map(), totalCasos: 0, sucesso: 0, erro: 0,
+};
+
+function go(n){
+  state.step = n;
+  document.querySelectorAll('.view').forEach(v =>
+    v.classList.toggle('active', +v.dataset.view === n));
+  document.querySelectorAll('.dot').forEach(d => {
+    const s = +d.dataset.step;
+    d.classList.toggle('active', s === n);
+    d.classList.toggle('done', s < n);
+  });
+  document.querySelectorAll('.bar').forEach((b,i) =>
+    b.classList.toggle('done', i < n - 1));
+  document.getElementById('wrap').classList.toggle('wide', n === 5);
+  if (n === 4) refreshReview();
+  window.scrollTo({top: 0, behavior: 'smooth'});
+}
+document.querySelectorAll('[data-back]').forEach(b =>
+  b.addEventListener('click', () => go(+b.dataset.back)));
+
+const drop1 = document.getElementById('drop1');
+const file1 = document.getElementById('file1');
+drop1.addEventListener('click', () => file1.click());
+drop1.addEventListener('dragover', e => { e.preventDefault(); drop1.classList.add('hover'); });
+drop1.addEventListener('dragleave', () => drop1.classList.remove('hover'));
+drop1.addEventListener('drop', e => {
+  e.preventDefault(); drop1.classList.remove('hover');
+  if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+});
+file1.addEventListener('change', e => {
+  if (e.target.files[0]) handleFile(e.target.files[0]);
+});
+
+async function handleFile(f){
+  document.getElementById('drop1-icon').textContent = '...';
+  document.getElementById('drop1-title').textContent = 'Enviando...';
+  document.getElementById('drop1-sub').textContent = f.name;
+  try {
+    const fd = new FormData();
+    fd.append('file', f);
+    const res = await fetch('/api/upload-spreadsheet', { method:'POST', body: fd });
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    state.spreadsheet = data;
+    drop1.classList.add('filled');
+    document.getElementById('drop1-icon').textContent = 'OK';
+    document.getElementById('drop1-title').textContent = f.name;
+    document.getElementById('drop1-sub').textContent =
+      data.rows + ' linha(s) - ' + data.columns.length + ' coluna(s)';
+    const pr = await fetch('/api/preview', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ spreadsheet: data.path })
+    }).then(r => r.json());
+    document.getElementById('preview1').style.display = 'block';
+    document.getElementById('pv-rows').textContent = pr.rows;
+    document.getElementById('pv-cols').textContent = pr.columns.length;
+    const missingEl = document.getElementById('pv-missing');
+    if (pr.missing.length) {
+      document.getElementById('pv-status').textContent = 'Atencao';
+      document.getElementById('pv-status').style.color = 'var(--warn)';
+      missingEl.innerHTML = '<div class="missing"><b>Colunas faltando:</b> ' + pr.missing.join(', ') + '</div>';
+    } else {
+      document.getElementById('pv-status').textContent = 'OK';
+      document.getElementById('pv-status').style.color = 'var(--ok)';
+      missingEl.innerHTML = '';
+    }
+    document.getElementById('next1').disabled = false;
+  } catch (err) {
+    alert('Erro ao enviar planilha: ' + err.message);
+    document.getElementById('drop1-icon').textContent = '+';
+    document.getElementById('drop1-title').textContent = 'Clique ou arraste o arquivo aqui';
+    document.getElementById('drop1-sub').textContent = '.xlsx - .xls - .csv';
+  }
+}
+document.getElementById('next1').addEventListener('click', () => go(2));
+
+const drop2 = document.getElementById('drop2');
+const file2 = document.getElementById('file2');
+drop2.addEventListener('click', () => file2.click());
+drop2.addEventListener('dragover', e => { e.preventDefault(); drop2.classList.add('hover'); });
+drop2.addEventListener('dragleave', () => drop2.classList.remove('hover'));
+drop2.addEventListener('drop', e => {
+  e.preventDefault(); drop2.classList.remove('hover');
+  if (e.dataTransfer.files[0]) handleZip(e.dataTransfer.files[0]);
+});
+file2.addEventListener('change', e => {
+  if (e.target.files[0]) handleZip(e.target.files[0]);
+});
+
+async function handleZip(f) {
+  document.getElementById('drop2-icon').textContent = '...';
+  document.getElementById('drop2-title').textContent = 'Enviando...';
+  document.getElementById('drop2-sub').textContent = f.name;
+  document.getElementById('next2').disabled = true;
+  try {
+    const fd = new FormData();
+    fd.append('file', f);
+    const res = await fetch('/api/upload-pdfs', { method: 'POST', body: fd });
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    state.pdfFolder = data;
+    state.pdfZipName = f.name;
+    drop2.classList.add('filled');
+    document.getElementById('drop2-icon').textContent = 'OK';
+    document.getElementById('drop2-title').textContent = f.name;
+    document.getElementById('drop2-sub').textContent = data.total + ' arquivo(s) encontrado(s)';
+    document.getElementById('folderStat').style.display = 'block';
+    document.getElementById('fs-pdf').textContent = data.pdf_count;
+    document.getElementById('fs-zip').textContent = data.zip_count;
+    document.getElementById('fs-total').textContent = data.total;
+    document.getElementById('next2').disabled = false;
+  } catch (err) {
+    alert('Erro ao enviar ZIP: ' + err.message);
+    document.getElementById('drop2-icon').textContent = '+';
+    document.getElementById('drop2-title').textContent = 'Clique ou arraste o ZIP aqui';
+    document.getElementById('drop2-sub').textContent = '.zip com os PDFs dos processos';
+  }
+}
+document.getElementById('next2').addEventListener('click', () => go(3));
+
+// auth state upload
+const state3 = { authLoaded: false };
+
+async function handleAuthFile(f) {
+  if (!f || !f.name.endsWith('.json')) { alert('Selecione o arquivo auth_state.json'); return; }
+  const fd = new FormData(); fd.append('file', f);
+  try {
+    const r = await fetch('/api/upload-auth', { method:'POST', body: fd });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Erro');
+    state3.authLoaded = true;
+    document.getElementById('authBadge').style.display = 'inline';
+    document.getElementById('authFileName').textContent = f.name + ' (' + d.cookies + ' cookies)';
+    document.getElementById('authDeleteBtn').style.display = 'inline';
+    check3();
+  } catch(e) { alert('Erro ao carregar auth_state: ' + e.message); }
+}
+
+document.getElementById('authFile').addEventListener('change', e => handleAuthFile(e.target.files[0]));
+document.getElementById('authDeleteBtn').addEventListener('click', async () => {
+  await fetch('/api/upload-auth', { method:'DELETE' });
+  state3.authLoaded = false;
+  document.getElementById('authBadge').style.display = 'none';
+  document.getElementById('authFileName').textContent = '';
+  document.getElementById('authDeleteBtn').style.display = 'none';
+  document.getElementById('authFile').value = '';
+  check3();
+});
+
+// ao entrar no step 3, verifica se já há auth_state no servidor
+document.querySelector('[data-back="2"]') && (() => {
+  fetch('/api/auth-status').then(r=>r.json()).then(d => {
+    if (d.exists) {
+      state3.authLoaded = true;
+      document.getElementById('authBadge').style.display = 'inline';
+      document.getElementById('authFileName').textContent = '(já no servidor — ' + d.cookies + ' cookies)';
+      document.getElementById('authDeleteBtn').style.display = 'inline';
+      check3();
+    }
+  }).catch(()=>{});
+})();
+
+function check3(){
+  const hasAuth = state3.authLoaded;
+  const hasCreds = document.getElementById('usuario').value.trim() &&
+                   document.getElementById('senha').value;
+  document.getElementById('next3').disabled = !(hasAuth || hasCreds);
+}
+['usuario','senha'].forEach(id =>
+  document.getElementById(id).addEventListener('input', check3));
+document.getElementById('next3').addEventListener('click', () => go(4));
+
+function refreshReview(){
+  const rows = state.spreadsheet ? state.spreadsheet.rows : 0;
+  const i = parseInt(document.getElementById('inicio').value || '0', 10) || 0;
+  const fRaw = document.getElementById('fim').value.trim();
+  const f = fRaw ? parseInt(fRaw, 10) : rows;
+  document.getElementById('rv-rows').textContent = Math.max(0, f - i);
+  document.getElementById('rv-pdfs').textContent = state.pdfFolder ? state.pdfFolder.total : '-';
+  document.getElementById('rv-range').textContent = i + ' -> ' + (fRaw || 'fim');
+  document.getElementById('rv-file').textContent = state.spreadsheet ? state.spreadsheet.filename : '-';
+  document.getElementById('rv-folder').textContent = state.pdfZipName || (state.pdfFolder ? state.pdfFolder.path : '-');
+  document.getElementById('rv-user').textContent = document.getElementById('usuario').value || '-';
+  document.getElementById('rv-mode').textContent =
+    document.getElementById('headless').checked ? 'Background (sem janela)' : 'Janela visivel do Chrome';
+  document.getElementById('rv-preserv').textContent =
+    document.getElementById('preservar').checked ? 'Sim - nao sobrescreve campos preenchidos' : 'Nao - sobrescreve tudo';
+}
+
+document.getElementById('startBtn').addEventListener('click', startExecution);
+document.getElementById('stopBtn').addEventListener('click', stopRpa);
+document.getElementById('restartBtn').addEventListener('click', () => {
+  resetDashboard(); go(4);
+});
+document.getElementById('exportBtn').addEventListener('click', exportCSV);
+
+async function startExecution(){
+  resetDashboard();
+  go(5);
+  const msEmail = document.getElementById('microsoftEmail').value.trim();
+  const body = {
+    usuario: document.getElementById('usuario').value.trim(),
+    senha:   document.getElementById('senha').value,
+    microsoft_email: msEmail || null,
+    spreadsheet: state.spreadsheet.path,
+    pasta_pdfs:  state.pdfFolder.path,
+    inicio: parseInt(document.getElementById('inicio').value || '0', 10) || 0,
+    fim:    document.getElementById('fim').value ?
+            parseInt(document.getElementById('fim').value, 10) : null,
+    headless: document.getElementById('headless').checked,
+    preservar_campos: document.getElementById('preservar').checked,
+  };
+  const total = (body.fim != null ? body.fim : state.spreadsheet.rows) - body.inicio;
+  state.totalCasos = Math.max(0, total);
+  document.getElementById('kTotal').textContent = state.totalCasos;
+  try {
+    const res = await fetch('/api/run', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const r = await res.json();
+    state.job = r.job_id;
+    state.startedAt = Date.now();
+    state.timerInt = setInterval(() => {
+      const s = Math.floor((Date.now() - state.startedAt) / 1000);
+      const mm = String(Math.floor(s/60)).padStart(2,'0');
+      const ss = String(s%60).padStart(2,'0');
+      document.getElementById('kTime').textContent = mm + ':' + ss;
+    }, 1000);
+    document.getElementById('stopBtn').style.display = 'inline-block';
+    document.getElementById('backBtn').disabled = true;
+    const es = new EventSource('/api/stream/' + r.job_id);
+    es.onmessage = ev => {
+      try { handleEvent(JSON.parse(ev.data)); } catch(e){ console.warn(e); }
+    };
+    es.addEventListener('end', () => es.close());
+    es.onerror = () => es.close();
+  } catch (err) {
+    alert('Erro ao disparar RPA: ' + err.message);
+    go(4);
+  }
+}
+
+function resetDashboard(){
+  state.cases = new Map();
+  state.sucesso = 0; state.erro = 0;
+  document.getElementById('kOk').textContent = '0';
+  document.getElementById('kErr').textContent = '0';
+  document.getElementById('kTime').textContent = '00:00';
+  document.getElementById('progBar').style.width = '0%';
+  document.getElementById('tblBody').innerHTML =
+    '<div class="empty" id="tblEmpty">Aguardando inicio...</div>';
+  document.getElementById('console').innerHTML = '';
+  document.getElementById('doneBanner').style.display = 'none';
+  document.getElementById('exportBtn').style.display = 'none';
+  document.getElementById('restartBtn').style.display = 'none';
+  document.getElementById('dashTitle').textContent = 'Executando...';
+  document.getElementById('dashLead').textContent =
+    'Acompanhe o progresso em tempo real. Cada caso aparece na tabela abaixo conforme e processado.';
+  if (state.timerInt) { clearInterval(state.timerInt); state.timerInt = null; }
+}
+
+function handleEvent(obj){
+  appendConsole(obj);
+  const step = obj.step;
+  const caso = obj.caso;
+  if (step === 'start_case' && caso) {
+    upsertCase(caso, { status:'run', msg:'Processando...' });
+  }
+  if (step === 'case_done' && caso) {
+    upsertCase(caso, { status:'ok', msg:'Concluido com sucesso' });
+    state.sucesso++;
+    document.getElementById('kOk').textContent = state.sucesso;
+  }
+  if (step === 'case_error' && caso) {
+    const m = (obj.msg || '').replace(/^ERRO em [^:]+:\s*/, '');
+    upsertCase(caso, { status:'err', msg: m || 'Erro durante execucao' });
+    state.erro++;
+    document.getElementById('kErr').textContent = state.erro;
+  }
+  if (step === 'progress' && obj.total) {
+    const pct = (obj.done / obj.total) * 100;
+    document.getElementById('progBar').style.width = pct + '%';
+  }
+  if (step === 'finished') {
+    finalize(obj.return_code);
+  }
+}
+
+function upsertCase(numero, patch){
+  let row = state.cases.get(numero);
+  if (!row) {
+    row = { idx: state.cases.size + 1, numero, status:'run', msg:'' };
+    state.cases.set(numero, row);
+    renderNewCaseRow(row);
+  }
+  Object.assign(row, patch);
+  const el = document.getElementById('case-' + cssEscape(numero));
+  if (el) {
+    el.querySelector('.st').className = 'st ' + row.status;
+    el.querySelector('.st').textContent =
+      row.status === 'run' ? 'running'
+      : row.status === 'ok' ? 'sucesso'
+      : 'erro';
+    el.querySelector('.msg').textContent = row.msg;
+    el.querySelector('.msg').title = row.msg;
+  }
+}
+
+function renderNewCaseRow(row){
+  const empty = document.getElementById('tblEmpty');
+  if (empty) empty.remove();
+  const body = document.getElementById('tblBody');
+  const el = document.createElement('div');
+  el.className = 'tbl-row';
+  el.id = 'case-' + cssEscape(row.numero);
+  el.innerHTML =
+    '<div class="n">' + row.idx + '</div>' +
+    '<div class="proc" title="' + escapeHtml(row.numero) + '">' + escapeHtml(row.numero) + '</div>' +
+    '<div class="st run">running</div>' +
+    '<div class="msg">Processando...</div>';
+  body.appendChild(el);
+  body.scrollTop = body.scrollHeight;
+}
+
+function finalize(returnCode){
+  if (state.timerInt) { clearInterval(state.timerInt); state.timerInt = null; }
+  document.getElementById('stopBtn').style.display = 'none';
+  document.getElementById('exportBtn').style.display = 'inline-block';
+  document.getElementById('restartBtn').style.display = 'inline-block';
+  document.getElementById('backBtn').disabled = false;
+  document.getElementById('progBar').style.width = '100%';
+  const total = state.sucesso + state.erro;
+  const b = document.getElementById('doneBanner');
+  b.style.display = 'flex';
+  if (returnCode === 0 && state.erro === 0) {
+    b.className = 'done-banner ok';
+    b.innerHTML = '<b>Execucao concluida com sucesso.</b> ' + state.sucesso + ' de ' + total + ' caso(s) processados sem erro.';
+    document.getElementById('dashTitle').textContent = 'Concluido';
+  } else if (returnCode === 0) {
+    b.className = 'done-banner warn';
+    b.innerHTML = '<b>Concluido com pendencias.</b> ' + state.sucesso + ' sucesso(s), ' + state.erro + ' erro(s). Confira a tabela.';
+    document.getElementById('dashTitle').textContent = 'Concluido com pendencias';
+  } else {
+    b.className = 'done-banner err';
+    b.innerHTML = '<b>Processo terminou com erro</b> (codigo ' + returnCode + ').';
+    document.getElementById('dashTitle').textContent = 'Falha na execucao';
+  }
+  document.getElementById('dashLead').textContent =
+    'Voce pode exportar o relatorio em CSV, executar novamente ou voltar.';
+}
+
+async function stopRpa(){
+  if (!state.job) return;
+  if (!confirm('Parar a execucao agora?')) return;
+  await fetch('/api/stop/' + state.job, { method:'POST' });
+}
+
+function exportCSV(){
+  const rows = [['#','Processo','Status','Detalhe']];
+  for (const entry of state.cases) {
+    const n = entry[0]; const r = entry[1];
+    const st = r.status === 'ok' ? 'Sucesso'
+             : r.status === 'err' ? 'Erro' : 'Em execucao';
+    rows.push([r.idx, n, st, r.msg || '']);
+  }
+  const csv = rows.map(r =>
+    r.map(v => {
+      const s = String(v).replace(/"/g,'""');
+      return /[",\n;]/.test(s) ? '"' + s + '"' : s;
+    }).join(';')
+  ).join('\r\n');
+  const blob = new Blob(['﻿' + csv], { type:'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const ts = new Date().toISOString().replace(/[:.]/g,'-').slice(0,19);
+  a.href = url;
+  a.download = 'relatorio_elaw_' + ts + '.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function appendConsole(obj){
+  const t = (obj.ts || '').slice(11,19);
+  const cls = 'l-' + (obj.level || 'info');
+  const div = document.createElement('div');
+  div.className = cls;
+  div.innerHTML = '<span class="ts">' + t + '</span>' + escapeHtml(obj.msg || '');
+  const c = document.getElementById('console');
+  c.appendChild(div);
+  c.scrollTop = c.scrollHeight;
+}
+
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function cssEscape(s){ return String(s).replace(/[^a-zA-Z0-9_-]/g,'_'); }
+
+['inicio','fim','headless','usuario','preservar'].forEach(id =>
+  document.getElementById(id).addEventListener('input', refreshReview));
+</script>
+</body>
+</html>

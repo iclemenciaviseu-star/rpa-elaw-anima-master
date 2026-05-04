@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: rpa-elaw-anima
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: PYTHONIOENCODING
+        value: utf-8
+      - key: PYTHONUTF8
+        value: "1"
+    # Nota: o plano gratuito do Render nao tem disco persistente.
+    # Arquivos enviados (planilhas, ZIPs) sao perdidos ao reiniciar o servico.
+    # Para persistencia use o plano pago com Disk mount em /app/uploads.

@@ -1,0 +1,31 @@
+# Sessao autenticada (cookies) - nao commitar
+auth_state.json
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# Execução
+logs/
+uploads/
+
+# Credenciais e configs temporários
+cfg_*.json
+*.env
+.env
+
+# Arquivos de teste
+.testfile.txt
+.test_novo.txt
+.html_dumped
+
+# Sistema
+.DS_Store
+Thumbs.db
+desktop.ini
