@@ -390,7 +390,7 @@ async def stop(job_id: str):
 
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.environ.get("PORT", 8765))
+    port = int(os.environ.get("PORT", 8080))
     host = "0.0.0.0" if os.environ.get("RENDER") else "127.0.0.1"
     print(f"RPA eLaw Anima - http://{host}:{port}")
     uvicorn.run(app, host=host, port=port, log_level="warning")

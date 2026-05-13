@@ -102,7 +102,7 @@ def encontrar_arquivo(numero, pasta):
         if os.path.exists(p):
             return p
     n_clean = re.sub(r"[.\-/]", "", n)
-    for arq in glob.glob(os.path.join(pasta, "*")):
+    for arq in glob.glob(os.path.join(pasta, "**", "*"), recursive=True):
         nome = os.path.basename(arq)
         nome_clean = re.sub(r"[.\-/\s_]", "", nome)
         if n_clean in nome_clean or n in nome:
@@ -384,7 +384,7 @@ async def _find_field_by_span(page, label_text, kind):
     return await page.evaluate(f"""
         (() => {{
             const target = {json.dumps(label_text.lower())};
-            const norm = s => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim().replace(/[:?*\s()]+$/, '');
+            const norm = s => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim().replace(/[:?*\\s()]+$/, '');
             const targetN = norm(target);
 
             // procura span com font-weight:bold contendo o texto
@@ -716,29 +716,61 @@ async def selecionar_pf(page, name_fragment, valor, log):
 
 async def marcar_pedidos(page, pedidos_lista, log):
     try:
-        wname = "widget_j_id_6v_2_18_2_j_5_3e_1_objetoList"
-        await page.evaluate(f"PrimeFaces.widgets['{wname}'].show()")
+        # Abre o painel: tenta widget registry primeiro, senao clica no trigger visual
+        wname = await page.evaluate("""
+            (() => {
+                if (!window.PrimeFaces || !PrimeFaces.widgets) return null;
+                return Object.keys(PrimeFaces.widgets).find(k => k.toLowerCase().includes('objetolist')) || null;
+            })()
+        """)
+        if wname:
+            await page.evaluate(f"PrimeFaces.widgets[{json.dumps(wname)}].show()")
+        else:
+            trigger = page.locator(
+                '.ui-selectcheckboxmenu .ui-selectcheckboxmenu-trigger, '
+                '.ui-selectcheckboxmenu-trigger'
+            ).first
+            await trigger.click(timeout=5000)
         await page.wait_for_timeout(600)
+
+        # Clica em cada pedido no painel aberto
         for pedido in pedidos_lista:
             ps = MAPA_PEDIDOS.get(pedido.strip(), pedido.strip() + " - Cível")
-            ok = await page.evaluate(f"""
-                const w = PrimeFaces.widgets['{wname}'];
-                let found = false;
-                w.panel.find('li.ui-selectcheckboxmenu-item').each(function() {{
-                    if ($(this).find('label').text().trim() === {json.dumps(ps)}) {{
-                        if (!$(this).find('input[type="checkbox"]').prop('checked'))
-                            $(this).find('.ui-chkbox-box').trigger('click');
-                        found = true;
+            clicado = await page.evaluate(f"""
+                (() => {{
+                    const norm = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+                    const wanted = norm({json.dumps(ps)});
+                    const panels = document.querySelectorAll(
+                        '.ui-selectcheckboxmenu-panel, [id*="objetoList_panel"], [id*="ObjetoList_panel"]'
+                    );
+                    for (const panel of panels) {{
+                        const items = panel.querySelectorAll('li.ui-selectcheckboxmenu-item');
+                        for (const item of items) {{
+                            const lbl = item.querySelector('label');
+                            const t = norm(lbl ? lbl.textContent : item.textContent || '');
+                            if (t === wanted || t.includes(wanted)) {{
+                                const cb = item.querySelector('.ui-chkbox-box');
+                                if (cb) cb.click();
+                                else item.click();
+                                return true;
+                            }}
+                        }}
                     }}
-                }});
-                found;
+                    return false;
+                }})()
             """)
-            if ok:
+            if clicado:
                 log.success(f"Pedido marcado: {ps}")
             else:
-                log.warn(f"Pedido nao encontrado: {ps}")
-        await page.evaluate(f"PrimeFaces.widgets['{wname}'].hide()")
+                log.warn(f"Pedido nao encontrado no painel: {ps}")
+
+        # Fecha o painel
+        if wname:
+            await page.evaluate(f"PrimeFaces.widgets[{json.dumps(wname)}].hide()")
+        else:
+            await page.keyboard.press("Escape")
         await page.wait_for_timeout(800)
+
         await page.locator('button[id*="addObjetos"]').first.click()
         await page.wait_for_timeout(1000)
         return True
@@ -753,8 +785,25 @@ async def fazer_upload(page, arquivo, log):
         await selecionar_pf(page, "eFileTipoCombo", "Documentos Gerais", log)
         await page.wait_for_timeout(800)
 
-        # 2. envia o arquivo
-        file_input = page.locator('#j_id_6v_2_18_2_l_5_5d_1\\:uploadGedEFile_input')
+        # 2. localiza o input de upload com multiplos seletores
+        file_input = None
+        for _sel in [
+            'input[id*="uploadGedEFile"]',
+            'input[type="file"][id*="GedEFile"]',
+            'input[type="file"][name*="GedEFile"]',
+            'input[type="file"]',
+        ]:
+            _loc = page.locator(_sel).first
+            try:
+                await _loc.wait_for(state='attached', timeout=3000)
+                file_input = _loc
+                log.info(f"Input upload encontrado: {_sel}")
+                break
+            except Exception:
+                continue
+        if file_input is None:
+            log.warn("Input de upload nao encontrado")
+            return False
         await file_input.set_input_files(arquivo)
         log.info(f"Anexando: {os.path.basename(arquivo)} - aguardando upload...")
 
@@ -943,12 +992,52 @@ async def preencher_formulario(page, row, pasta_pdfs, log, preservar=True):
 
     # ==== Fase processual ====
     log.info(f"Fase processual: {fase}")
-    await fill_select_robusto(
+    ok_fase = await fill_select_robusto(
         page,
         ["Fase processual", "Fase"],
         fase, log,
         fallback_id_fragment="j_id_6v_2_18_2_h_5_3a_1"
     )
+    if not ok_fase:
+        ok_fase = await page.evaluate(f"""
+            (() => {{
+                const norm = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim().replace(/[:*()\\s]+$/, '');
+                const target = 'fase processual';
+                const wanted = norm({json.dumps(fase)});
+                const all = Array.from(document.querySelectorAll('td, th, label, span, div'))
+                    .filter(e => e.children.length === 0 && norm(e.textContent || '').startsWith('fase'));
+                for (const el of all) {{
+                    let p = el.parentElement;
+                    let sel = null;
+                    for (let i = 0; i < 8 && p && !sel; i++) {{
+                        sel = p.querySelector('select');
+                        if (!sel) p = p.parentElement;
+                    }}
+                    if (!sel) continue;
+                    let opt = null;
+                    for (const o of sel.options) {{
+                        if (norm(o.textContent) === wanted) {{ opt = o; break; }}
+                    }}
+                    if (!opt) for (const o of sel.options) {{
+                        if (norm(o.textContent).includes(wanted)) {{ opt = o; break; }}
+                    }}
+                    if (!opt) continue;
+                    sel.value = opt.value;
+                    sel.dispatchEvent(new Event('change', {{bubbles: true}}));
+                    const w = sel.closest('.ui-selectonemenu');
+                    if (w) {{
+                        const lbl = w.querySelector('.ui-selectonemenu-label');
+                        if (lbl) lbl.textContent = opt.textContent;
+                    }}
+                    return true;
+                }}
+                return false;
+            }})()
+        """)
+        if ok_fase:
+            log.info("Fase processual preenchida via varredura ampla")
+        else:
+            log.warn("Fase processual nao preenchida!")
     await page.wait_for_timeout(1200)
 
     # ==== Resumo da Acao (textarea) ====
@@ -1235,148 +1324,156 @@ async def processar(page, row, idx, total, pasta_pdfs, log, preservar=True):
 
         # espera tudo se acomodar antes de salvar (especialmente upload)
         await page.wait_for_timeout(3000)
-        log.info("Salvando...")
         url_antes = page.url
-        btn = page.locator('button:has-text("Confirmar")').last
-        await btn.scroll_into_view_if_needed()
-        await btn.click()
-        log.info("Aguardando confirmacao do save (URL mudar OU growl aparecer, ate 90s)...")
-
         import time as _t
-        t_inicio = _t.time()
 
-        # ESPERA ATIVA: ate uma das condicoes ocorrer ou 90s passarem
-        # NOTA: se a pagina navegar durante o evaluate, ele lanca "Execution context destroyed"
-        # essa exception E o sinal de sucesso (= save deu redirect)
-        try:
-            sinal = await page.evaluate(f"""
-                async () => {{
-                    const urlAntes = {json.dumps(url_antes)};
-                    const inicio = Date.now();
-                    const limite = 90000;
-                    while ((Date.now() - inicio) < limite) {{
-                        if (window.location.href !== urlAntes) {{
-                            return {{tipo: 'url-mudou', url: window.location.href}};
-                        }}
-                        const erros = document.querySelectorAll(
-                            '.ui-growl-message-error, .ui-messages-error, ' +
-                            '.ui-growl-message.ui-state-error'
-                        );
-                        for (const e of erros) {{
-                            const t = (e.innerText || '').trim();
-                            if (t && !e.closest('.ui-helper-hidden')) {{
-                                return {{tipo: 'erro', msg: t.slice(0, 400)}};
-                            }}
-                        }}
-                        const sucessos = document.querySelectorAll(
-                            '.ui-growl-message-info, .ui-growl-message:not(.ui-state-error)'
-                        );
-                        for (const s of sucessos) {{
-                            const t = (s.innerText || '').toLowerCase();
-                            if (t.includes('sucesso') || t.includes('salvo') ||
-                                t.includes('confirmad') || t.includes('conclu') ||
-                                t.includes('agendad')) {{
-                                return {{tipo: 'sucesso', msg: t.slice(0, 200)}};
-                            }}
-                        }}
-                        await new Promise(r => setTimeout(r, 500));
-                    }}
-                    return {{tipo: 'timeout', url: window.location.href}};
-                }}
-            """)
-        except Exception as e:
-            err_msg = str(e)
-            if "Execution context was destroyed" in err_msg or "navigation" in err_msg.lower():
-                # ISSO E SUCESSO: a pagina navegou durante a espera
-                sinal = {"tipo": "url-mudou-via-nav", "url": page.url}
-            else:
-                raise
-        elapsed = _t.time() - t_inicio
-        log.info(f"Save: sinal={sinal.get('tipo')} em {elapsed:.1f}s - {sinal.get('msg', sinal.get('url', ''))[:200]}")
+        for tentativa_save in range(1, 3):  # 2 tentativas
+            log.info(f"Salvando (tentativa {tentativa_save}/2)...")
+            btn = page.locator('button:has-text("Confirmar")').last
+            await btn.scroll_into_view_if_needed()
+            await btn.click()
+            log.info("Aguardando confirmacao do save (URL mudar OU growl aparecer, ate 90s)...")
 
-        # garante que networkidle aconteceu antes de prosseguir
-        try:
-            await page.wait_for_load_state("networkidle", timeout=15000)
-        except Exception:
-            pass
-        await page.wait_for_timeout(2000)
+            t_inicio = _t.time()
 
-        # detecta mensagens de erro/validacao do PrimeFaces
-        erros = await page.evaluate("""
-            (() => {
-                const msgs = [];
-                // growl (toast)
-                document.querySelectorAll(
-                    '.ui-growl-message-error, .ui-growl-item-container.ui-state-error, .ui-growl-message.ui-message-error'
-                ).forEach(e => {
-                    const t = (e.innerText || '').trim();
-                    if (t) msgs.push('GROWL: ' + t);
-                });
-                // messages (na pagina)
-                document.querySelectorAll(
-                    '.ui-messages-error, .ui-message-error, .ui-messages-error-detail'
-                ).forEach(e => {
-                    const t = (e.innerText || '').trim();
-                    if (t) msgs.push('MSG: ' + t);
-                });
-                // alerts genericos
-                document.querySelectorAll('[role="alert"]').forEach(e => {
-                    const t = (e.innerText || '').trim();
-                    if (t) msgs.push('ALERT: ' + t);
-                });
-                return msgs;
-            })()
-        """)
-
-        if erros:
-            # falha de validacao - salva screenshot pra diagnostico
             try:
-                safe = re.sub(r'[^0-9a-zA-Z]', '_', numero)
-                log_dir = Path(__file__).resolve().parent / "logs"
-                log_dir.mkdir(exist_ok=True)
-                shot = log_dir / f"erro_save_{safe}.png"
-                await page.screenshot(path=str(shot), full_page=True)
-                log.warn(f"Screenshot do erro: {shot}")
+                sinal = await page.evaluate(f"""
+                    async () => {{
+                        const urlAntes = {json.dumps(url_antes)};
+                        const inicio = Date.now();
+                        const limite = 90000;
+                        while ((Date.now() - inicio) < limite) {{
+                            if (window.location.href !== urlAntes) {{
+                                return {{tipo: 'url-mudou', url: window.location.href}};
+                            }}
+                            const erros = document.querySelectorAll(
+                                '.ui-growl-message-error, .ui-messages-error, ' +
+                                '.ui-growl-message.ui-state-error'
+                            );
+                            for (const e of erros) {{
+                                const t = (e.innerText || '').trim();
+                                if (t && !e.closest('.ui-helper-hidden')) {{
+                                    return {{tipo: 'erro', msg: t.slice(0, 400)}};
+                                }}
+                            }}
+                            const sucessos = document.querySelectorAll(
+                                '.ui-growl-message-info, .ui-growl-message:not(.ui-state-error)'
+                            );
+                            for (const s of sucessos) {{
+                                const t = (s.innerText || '').toLowerCase();
+                                if (t.includes('sucesso') || t.includes('salvo') ||
+                                    t.includes('confirmad') || t.includes('conclu') ||
+                                    t.includes('agendad')) {{
+                                    return {{tipo: 'sucesso', msg: t.slice(0, 200)}};
+                                }}
+                            }}
+                            await new Promise(r => setTimeout(r, 500));
+                        }}
+                        return {{tipo: 'timeout', url: window.location.href}};
+                    }}
+                """)
+            except Exception as e:
+                err_msg = str(e)
+                if "Execution context was destroyed" in err_msg or "navigation" in err_msg.lower():
+                    sinal = {"tipo": "url-mudou-via-nav", "url": page.url}
+                else:
+                    raise
+            elapsed = _t.time() - t_inicio
+            log.info(f"Save: sinal={sinal.get('tipo')} em {elapsed:.1f}s - {sinal.get('msg', sinal.get('url', ''))[:200]}")
+
+            try:
+                await page.wait_for_load_state("networkidle", timeout=15000)
             except Exception:
                 pass
-            msg_curta = " | ".join(erros)[:300]
-            raise Exception(f"eLaw rejeitou o save: {msg_curta}")
+            await page.wait_for_timeout(2000)
 
-        # checa se realmente saiu da tela do formulario
-        if page.url == url_antes:
-            # nao navegou. verifica se tem growl/messages de SUCESSO antes de declarar erro
-            sucesso = await page.evaluate("""
+            erros = await page.evaluate("""
                 (() => {
-                    const candidatos = document.querySelectorAll(
-                        '.ui-growl-message-info, .ui-growl-message:not(.ui-growl-message-error):not(.ui-state-error), ' +
-                        '.ui-messages-info, .ui-message-info, ' +
-                        '[class*="success"], [class*="ok"]'
-                    );
-                    for (const c of candidatos) {
-                        const t = (c.innerText || '').toLowerCase();
-                        if (t.includes('sucesso') || t.includes('salvo') || t.includes('confirmad') || t.includes('conclu')) {
-                            return t.slice(0, 200);
-                        }
-                    }
-                    return null;
+                    const msgs = [];
+                    document.querySelectorAll(
+                        '.ui-growl-message-error, .ui-growl-item-container.ui-state-error, .ui-growl-message.ui-message-error'
+                    ).forEach(e => {
+                        const t = (e.innerText || '').trim();
+                        if (t) msgs.push('GROWL: ' + t);
+                    });
+                    document.querySelectorAll(
+                        '.ui-messages-error, .ui-message-error, .ui-messages-error-detail'
+                    ).forEach(e => {
+                        const t = (e.innerText || '').trim();
+                        if (t) msgs.push('MSG: ' + t);
+                    });
+                    document.querySelectorAll('[role="alert"]').forEach(e => {
+                        const t = (e.innerText || '').trim();
+                        if (t) msgs.push('ALERT: ' + t);
+                    });
+                    return msgs;
                 })()
             """)
-            if sucesso:
-                log.success(f"Save confirmado por growl: {sucesso}")
-            else:
-                # nao tem nem erro nem sucesso. Salva print pra investigar
+
+            if erros:
                 try:
                     safe = re.sub(r'[^0-9a-zA-Z]', '_', numero)
                     log_dir = Path(__file__).resolve().parent / "logs"
                     log_dir.mkdir(exist_ok=True)
-                    shot = log_dir / f"sem_navegacao_{safe}.png"
+                    shot = log_dir / f"erro_save_{safe}.png"
                     await page.screenshot(path=str(shot), full_page=True)
-                    log.warn(f"Save nao navegou. Screenshot: {shot}")
+                    log.warn(f"Screenshot do erro: {shot}")
                 except Exception:
                     pass
-                raise Exception(
-                    f"Save aparentemente nao funcionou - pagina nao mudou de {url_antes}"
-                )
+                msg_curta = " | ".join(erros)[:300]
+                if tentativa_save < 2:
+                    log.warn(f"Save tentativa {tentativa_save} falhou ({msg_curta[:80]}) — aguardando 5s para retry...")
+                    await page.wait_for_timeout(5000)
+                    continue
+                raise Exception(f"eLaw rejeitou o save: {msg_curta}")
+
+            if page.url == url_antes:
+                sucesso = await page.evaluate("""
+                    (() => {
+                        const candidatos = document.querySelectorAll(
+                            '.ui-growl-message-info, .ui-growl-message:not(.ui-growl-message-error):not(.ui-state-error), ' +
+                            '.ui-messages-info, .ui-message-info, ' +
+                            '[class*="success"], [class*="ok"]'
+                        );
+                        for (const c of candidatos) {
+                            const t = (c.innerText || '').toLowerCase();
+                            if (t.includes('sucesso') || t.includes('salvo') || t.includes('confirmad') || t.includes('conclu')) {
+                                return t.slice(0, 200);
+                            }
+                        }
+                        return null;
+                    })()
+                """)
+                if sucesso:
+                    log.success(f"Save confirmado por growl: {sucesso}")
+                    break
+                else:
+                    if tentativa_save < 2:
+                        try:
+                            safe = re.sub(r'[^0-9a-zA-Z]', '_', numero)
+                            log_dir = Path(__file__).resolve().parent / "logs"
+                            log_dir.mkdir(exist_ok=True)
+                            shot = log_dir / f"sem_navegacao_{safe}.png"
+                            await page.screenshot(path=str(shot), full_page=True)
+                            log.warn(f"Save nao navegou (tentativa {tentativa_save}). Screenshot: {shot} — aguardando 5s para retry...")
+                        except Exception:
+                            pass
+                        await page.wait_for_timeout(5000)
+                        continue
+                    try:
+                        safe = re.sub(r'[^0-9a-zA-Z]', '_', numero)
+                        log_dir = Path(__file__).resolve().parent / "logs"
+                        log_dir.mkdir(exist_ok=True)
+                        shot = log_dir / f"sem_navegacao_{safe}.png"
+                        await page.screenshot(path=str(shot), full_page=True)
+                        log.warn(f"Save nao navegou. Screenshot: {shot}")
+                    except Exception:
+                        pass
+                    raise Exception(
+                        f"Save aparentemente nao funcionou - pagina nao mudou de {url_antes}"
+                    )
+            else:
+                break  # pagina navegou = sucesso
 
         log.success(f"Concluido: {numero}", step="case_done", caso=numero)
         return True
