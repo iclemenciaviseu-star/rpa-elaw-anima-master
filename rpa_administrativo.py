@@ -1,5 +1,6 @@
-"""
-RPA eLaw Anima - Complemento de Cadastro (Judicial)
+﻿"""
+RPA eLaw Anima - Complemento de Cadastro - Escritório (Administrativo)
+Campos: Resumo, Pedidos, Prazo, Subsidios, Upload, Objeto da Acao + Causa Raiz (cascata).
 """
 from __future__ import annotations
 
@@ -97,18 +98,66 @@ def carregar_planilha(caminho):
 
 
 def encontrar_arquivo(numero, pasta):
+    """Busca o PDF/ZIP do processo na pasta de forma flexivel.
+
+    Processos administrativos usam '/' no numero (ex: 12345/2026), mas o
+    Windows nao permite '/' em nomes de arquivo. O usuario pode ter salvo
+    o PDF com espaco, ponto, hifen, underscore ou sem separador:
+        12345/2026  →  "12345 2026.pdf" | "12345.2026.pdf" |
+                       "12345-2026.pdf" | "12345_2026.pdf" | "123452026.pdf"
+
+    A busca normaliza tanto o numero do processo quanto o nome do arquivo
+    (remove todos os separadores) e escolhe o candidato mais especifico
+    (nome cujo comprimento normalizado mais se aproxima do numero buscado).
+    """
     n = numero.strip()
+
+    # ── 1. Tentativa exata ──────────────────────────────────────────────
     for ext in ("", ".pdf", ".PDF", ".zip", ".ZIP"):
         p = os.path.join(pasta, n + ext)
         if os.path.exists(p):
             return p
-    n_clean = re.sub(r"[.\-/]", "", n)
+
+    # ── 2. Prepara variantes de busca ───────────────────────────────────
+    # n_base: numero sem QUALQUER separador  →  "123452026"
+    n_base = re.sub(r"[/\-.\s_]", "", n)
+
+    # partes: segmentos separados por '/' ou '-'  →  ["12345", "2026"]
+    partes = [p for p in re.split(r"[/\-]", n) if p.strip()]
+
+    if not n_base:
+        return None
+
+    # ── 3. Varre a pasta e pontua candidatos ────────────────────────────
+    candidatos = []  # [(score, caminho)]
+
     for arq in glob.glob(os.path.join(pasta, "**", "*"), recursive=True):
-        nome = os.path.basename(arq)
-        nome_clean = re.sub(r"[.\-/\s_]", "", nome)
-        if n_clean in nome_clean or n in nome:
-            return arq
-    return None
+        if not os.path.isfile(arq):
+            continue
+
+        nome       = os.path.basename(arq)
+        nome_s_ext = os.path.splitext(nome)[0]           # sem extensao
+        nome_base  = re.sub(r"[/\-.\s_]", "", nome_s_ext)  # tudo junto
+
+        # --- critério A: versao sem separadores está contida no nome ---
+        if n_base in nome_base:
+            # score = fracao do nome que eh o numero procurado
+            # (quanto mais proximo de 1.0, mais especifico o match)
+            score = len(n_base) / max(len(nome_base), 1)
+            candidatos.append((score, arq))
+            continue
+
+        # --- critério B: todas as partes do numero aparecem no nome ---
+        # (captura casos como "12345 de 2026 processo.pdf")
+        if len(partes) >= 2 and all(p in nome_s_ext for p in partes):
+            candidatos.append((0.3, arq))
+
+    if not candidatos:
+        return None
+
+    # Retorna o candidato com maior score (match mais especifico)
+    candidatos.sort(key=lambda x: -x[0])
+    return candidatos[0][1]
 
 
 def normalizar_subsidios(valor):
@@ -848,10 +897,15 @@ async def fazer_upload(page, arquivo, log):
             log.warn("Timeout esperando upload terminar (pode ser arquivo grande)")
 
         # 5. aguarda o arquivo aparecer na tabela "Documentos"
-        await page.wait_for_selector(
-            '#j_id_6v_2_18_2_l_5_5d_1\\:gedEFileDataTable tbody tr',
-            timeout=30000
-        )
+        # Usa seletor generico (ID JSF varia por formulario)
+        try:
+            await page.wait_for_selector(
+                '[id*="gedEFileDataTable"] tbody tr, [id*="GedEFile"] tbody tr, '
+                '[id*="fileDataTable"] tbody tr',
+                timeout=15000
+            )
+        except Exception:
+            log.info("(tabela de documentos nao detectada, prosseguindo)")
 
         # 6. networkidle - espera todos os requests AJAX terminarem
         try:
@@ -868,9 +922,112 @@ async def fazer_upload(page, arquivo, log):
         log.warn(f"Upload: {e}")
         return False
 
+async def selecionar_via_aria_controls(page, nomes_label, valor, log):
+    """Estrategia 1.7: localiza o widget pelo span.ui-selectonemenu-label proximo
+    ao label de campo (sem depender de title= no widget).
+    Usa o aria-controls do span pra derivar o ID do painel e do select hidden.
+    Funciona mesmo quando .ui-selectonemenu nao tem title=.
+    """
+    result = await page.evaluate(f"""
+        (() => {{
+            const norm = s => s.normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase().trim();
+            const nomes = {json.dumps([n.lower() for n in nomes_label])};
+            const valor = {json.dumps(valor)};
+            const valorN = norm(valor);
+
+            // Percorre todos os span.ui-selectonemenu-label com role=combobox
+            const labelSpans = document.querySelectorAll('span.ui-selectonemenu-label[role="combobox"][aria-controls]');
+            for (const lspan of labelSpans) {{
+                // Sobe ate o widget (.ui-selectonemenu)
+                const widget = lspan.closest('.ui-selectonemenu');
+                if (!widget) continue;
+
+                // Tenta encontrar o texto da label de campo associada ao widget
+                // Busca em ate 6 ancestrais por texto label/span/td sem filhos de input
+                let labelText = '';
+                let ancestor = widget.parentElement;
+                for (let i = 0; i < 10 && ancestor; i++) {{
+                    // procura texto de label em td irmaos OU spans sem children
+                    const candidates = ancestor.querySelectorAll(
+                        'label, .ui-outputlabel, td > span, td > div, th'
+                    );
+                    for (const c of candidates) {{
+                        if (c === widget || c.contains(widget)) continue;
+                        const t = norm(c.textContent || '');
+                        if (t.length > 2 && t.length < 80) {{
+                            labelText = t;
+                            break;
+                        }}
+                    }}
+                    if (labelText) break;
+                    ancestor = ancestor.parentElement;
+                }}
+
+                // Verifica se algum nome_label bate com o labelText encontrado
+                const matched = nomes.some(n => {{
+                    const nN = norm(n);
+                    return labelText === nN || labelText.startsWith(nN) || nN.startsWith(labelText);
+                }});
+                if (!matched) continue;
+
+                // Encontrou o widget! Usa o select hidden
+                const panelId = lspan.getAttribute('aria-controls');
+                const sel = widget.querySelector('select');
+                if (!sel) return 'no-select:' + (panelId || '?');
+
+                // Tenta opcao exata, depois includes
+                let opt = null;
+                for (const o of sel.options) {{
+                    if (norm(o.text || o.textContent) === valorN) {{ opt = o; break; }}
+                }}
+                if (!opt) {{
+                    for (const o of sel.options) {{
+                        const t = norm(o.text || o.textContent);
+                        if (t.includes(valorN) || valorN.includes(t)) {{ opt = o; break; }}
+                    }}
+                }}
+                if (!opt) {{
+                    const opts = Array.from(sel.options).map(o => (o.text||o.textContent).trim()).slice(0,8).join('|');
+                    return 'no-opt:label=' + labelText + ':opts=' + opts;
+                }}
+
+                sel.value = opt.value;
+                lspan.textContent = (opt.text || opt.textContent).trim();
+                sel.dispatchEvent(new Event('change', {{bubbles: true}}));
+                if (window.jQuery) jQuery(sel).trigger('change');
+
+                // Dispara AJAX PrimeFaces via widget registry
+                const wid = widget.id;
+                if (window.PrimeFaces && PrimeFaces.widgets) {{
+                    for (const pw of Object.values(PrimeFaces.widgets)) {{
+                        if (!pw) continue;
+                        const byId  = wid && pw.id === wid;
+                        const byInp = pw.input && (pw.input[0] === sel ||
+                                      (typeof pw.input.is === 'function' && pw.input.is(sel)));
+                        if (byId || byInp) {{
+                            try {{ if (typeof pw.callBehavior === 'function') pw.callBehavior('change'); }} catch(e) {{}}
+                            break;
+                        }}
+                    }}
+                }}
+                return 'ok:label=' + labelText;
+            }}
+            return 'no-widget-found';
+        }})()
+    """)
+    if result and result.startswith('ok:'):
+        log.info(f"  -> preenchido via aria-controls ({result})")
+        return True
+    if result and result not in ('no-widget-found',):
+        log.warn(f"aria-controls strategy: {result}")
+    return False
+
+
 async def fill_select_robusto(page, nomes_label, valor, log, fallback_id_fragment=None):
     """Tenta preencher um PrimeFaces select usando varias estrategias:
     1. Click humano via title= no widget
+    1.5. title+select direto via JS
+    1.7. aria-controls: widget sem title= (localiza pelo span label proximo)
     2. Span-based: acha <span>label:</span> e o select adjacente
     3. Fallback por id parcial
     """
@@ -914,10 +1071,24 @@ async def fill_select_robusto(page, nomes_label, valor, log, fallback_id_fragmen
                 }}
                 if (!opt) return 'no-opt:w=' + wantedN + ':' + Array.from(sel.options).map(o => norm(getText(o))).slice(0,10).join('|');
                 sel.value = opt.value;
-                sel.dispatchEvent(new Event('change', {{bubbles: true}}));
-                if (window.jQuery) jQuery(sel).trigger('change');
                 const lbl = widget.querySelector('.ui-selectonemenu-label');
                 if (lbl) lbl.textContent = opt.textContent.trim();
+                sel.dispatchEvent(new Event('change', {{bubbles: true}}));
+                if (window.jQuery) jQuery(sel).trigger('change');
+                // Dispara AJAX do PrimeFaces diretamente via widget registry (evita assert currentFocus)
+                const wid = widget.id;
+                if (window.PrimeFaces && PrimeFaces.widgets) {{
+                    for (const pw of Object.values(PrimeFaces.widgets)) {{
+                        if (!pw) continue;
+                        const byId  = wid && pw.id === wid;
+                        const byInp = pw.input && (pw.input[0] === sel ||
+                                      (typeof pw.input.is === 'function' && pw.input.is(sel)));
+                        if (byId || byInp) {{
+                            try {{ if (typeof pw.callBehavior === 'function') pw.callBehavior('change'); }} catch(e) {{}}
+                            break;
+                        }}
+                    }}
+                }}
                 return 'ok';
             }})()
         """)
@@ -926,6 +1097,10 @@ async def fill_select_robusto(page, nomes_label, valor, log, fallback_id_fragmen
             return True
         elif result not in ('no-widget', 'no-select'):
             log.warn(f"title+select direto '{nome}': {result}")
+
+    # Estrategia 1.7: aria-controls — widgets sem title= (ex: formulario admin do eLaw)
+    if await selecionar_via_aria_controls(page, nomes_label, valor, log):
+        return True
 
     # Estrategia 2: span-based
     for nome in nomes_label:
@@ -1093,33 +1268,336 @@ async def fill_typeahead_juiz(page, valor, log):
         return False
 
 
+async def _selecionar_dropdown_filtrado(page, label_texto, valor, log):
+    """
+    Fallback para PrimeFaces SelectOneMenu com campo de filtro (caixa de busca).
+    Estrategia: encontra o widget pelo label, abre o painel,
+    digita no input de filtro, clica no primeiro li correspondente.
+    Retorna True se selecionou com sucesso.
+    """
+    import unicodedata as _ud
+
+    def norm(s):
+        s2 = _ud.normalize('NFD', s)
+        s2 = ''.join(c for c in s2 if _ud.category(c) != 'Mn')
+        return s2.lower().strip()
+
+    valor_norm = norm(valor)
+
+    # Estrategia 1: acha o widget pela proximidade do label e usa filtro
+    try:
+        result = await page.evaluate("""
+            async ([labelTxt, valorNorm]) => {
+                const normJS = s => s.normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase().trim();
+
+                // Encontra todos os wrappers PrimeFaces de selectonemenu
+                const widgets = document.querySelectorAll('.ui-selectonemenu');
+                // Encontra o label que contem o texto
+                const labels = Array.from(document.querySelectorAll('label, td, th, span, div'))
+                    .filter(el => el.children.length === 0 && normJS(el.textContent).includes(normJS(labelTxt)));
+
+                let targetWidget = null;
+                for (const lbl of labels) {
+                    let p = lbl.parentElement;
+                    for (let i = 0; i < 10 && p && !targetWidget; i++) {
+                        const w = p.querySelector('.ui-selectonemenu');
+                        if (w) { targetWidget = w; break; }
+                        p = p.parentElement;
+                    }
+                    if (targetWidget) break;
+                }
+
+                if (!targetWidget) return 'no-widget';
+
+                // Helper: dispara PrimeFaces AJAX cascade diretamente via widget registry,
+                // contornando o PrimeFaces.assert(currentFocus) que bloqueia o handler normal.
+                const triggerPF = (sel) => {
+                    const wid = targetWidget.id;
+                    if (window.PrimeFaces && PrimeFaces.widgets) {
+                        for (const pw of Object.values(PrimeFaces.widgets)) {
+                            if (!pw) continue;
+                            const byId  = wid && pw.id === wid;
+                            const byInp = pw.input && (pw.input[0] === sel ||
+                                          (typeof pw.input.is === 'function' && pw.input.is(sel)));
+                            if (byId || byInp) {
+                                try {
+                                    if (typeof pw.callBehavior === 'function') pw.callBehavior('change');
+                                } catch(e) {}
+                                break;
+                            }
+                        }
+                    }
+                };
+
+                // Tenta via hidden <select> direto (mais rapido, sem abrir panel)
+                const hiddenSel = targetWidget.querySelector('select');
+                if (hiddenSel) {
+                    const wanted = normJS(valorNorm);
+                    for (const opt of hiddenSel.options) {
+                        if (normJS(opt.text || opt.textContent) === wanted) {
+                            hiddenSel.value = opt.value;
+                            const lbl = targetWidget.querySelector('.ui-selectonemenu-label');
+                            if (lbl) lbl.textContent = (opt.text || opt.textContent).trim();
+                            hiddenSel.dispatchEvent(new Event('change', {bubbles: true}));
+                            if (window.jQuery) jQuery(hiddenSel).trigger('change');
+                            triggerPF(hiddenSel);
+                            return 'hidden-select-ok';
+                        }
+                    }
+                    // tenta includes
+                    for (const opt of hiddenSel.options) {
+                        const t = normJS(opt.text || opt.textContent);
+                        if (t.includes(wanted) || wanted.includes(t)) {
+                            hiddenSel.value = opt.value;
+                            const lbl = targetWidget.querySelector('.ui-selectonemenu-label');
+                            if (lbl) lbl.textContent = (opt.text || opt.textContent).trim();
+                            hiddenSel.dispatchEvent(new Event('change', {bubbles: true}));
+                            if (window.jQuery) jQuery(hiddenSel).trigger('change');
+                            triggerPF(hiddenSel);
+                            return 'hidden-select-includes-ok';
+                        }
+                    }
+                    return 'no-opt:' + Array.from(hiddenSel.options).map(o => normJS(o.text||o.textContent)).slice(0,8).join('|');
+                }
+                return 'no-hidden-select';
+            }
+        """, [label_texto, valor_norm])
+        log.info(f"_selecionar_dropdown_filtrado '{label_texto}': {result}")
+        if isinstance(result, str) and result.startswith(('hidden-select', 'hidden-select-includes')):
+            return True
+        if isinstance(result, str) and result.startswith('no-opt:'):
+            log.warn(f"Dropdown '{label_texto}': opcoes disponiveis: {result}")
+    except Exception as e:
+        log.warn(f"_selecionar_dropdown_filtrado erro JS: {e}")
+
+    # Estrategia 2: clica no trigger para abrir o panel e usa filtro
+    try:
+        # Encontra trigger do widget via label
+        trigger = None
+        for lbl_text in [label_texto]:
+            try:
+                lbl = page.locator(f'label:has-text("{lbl_text}"), td:has-text("{lbl_text}")')
+                if await lbl.count() == 0:
+                    continue
+                # Encontra o proximo .ui-selectonemenu-trigger
+                row_el = lbl.first.locator('xpath=ancestor::tr[1] | ancestor::td[1] | ancestor::div[1]')
+                trigger_candidate = page.locator(f'.ui-selectonemenu:near(:text("{lbl_text}")) .ui-selectonemenu-trigger')
+                if await trigger_candidate.count() > 0:
+                    trigger = trigger_candidate.first
+                    break
+            except Exception:
+                continue
+
+        if trigger:
+            try:
+                await trigger.scroll_into_view_if_needed(timeout=3000)
+            except Exception:
+                try:
+                    handle = await trigger.element_handle()
+                    if handle:
+                        await page.evaluate("el => el.scrollIntoView({block:'center',behavior:'instant'})", handle)
+                except Exception:
+                    pass
+            await page.wait_for_timeout(300)
+            await trigger.click(force=True)
+            await page.wait_for_timeout(600)
+
+            # Digita no filtro se existir
+            filter_input = page.locator('.ui-selectonemenu-filter:visible, input.ui-selectonemenu-filter:visible')
+            if await filter_input.count() > 0:
+                await filter_input.first.fill(valor[:20])
+                await page.wait_for_timeout(500)
+
+            # Clica no primeiro li visivel que bate
+            items = page.locator('.ui-selectonemenu-item:visible, .ui-selectonemenu-panel:visible li')
+            cnt = await items.count()
+            for i in range(cnt):
+                item = items.nth(i)
+                txt = (await item.text_content() or '').strip()
+                if norm(txt) == valor_norm or valor_norm in norm(txt) or norm(txt) in valor_norm:
+                    await item.click()
+                    log.info(f"_selecionar_dropdown_filtrado '{label_texto}': clicou item '{txt}'")
+                    return True
+
+        log.warn(f"_selecionar_dropdown_filtrado '{label_texto}': nenhum item encontrado para '{valor}'")
+        return False
+    except Exception as e:
+        log.warn(f"_selecionar_dropdown_filtrado '{label_texto}' erro estrategia 2: {e}")
+        return False
+
+def _norm_col(s):
+    """Normaliza nome de coluna para comparacao maxima tolerancia:
+    - minusculo
+    - remove acentos
+    - remove TODA pontuacao (parens, colchetes, dois-pontos, interrogacao, etc.)
+    - colapsa espacos multiplos
+    Resultado: apenas letras, numeros e espacos simples.
+    Ex: 'Causa raiz:'   -> 'causa raiz'
+        '(Processo) N.' -> 'processo n'
+        'OBJETO'        -> 'objeto'
+        'Deseja subsidios?' -> 'deseja subsidios'
+    """
+    s = str(s).strip().lower()
+    for a, b in [('ã','a'),('á','a'),('â','a'),('à','a'),('ä','a'),
+                 ('é','e'),('ê','e'),('è','e'),('í','i'),('ì','i'),
+                 ('ó','o'),('ô','o'),('ò','o'),('õ','o'),('ö','o'),
+                 ('ú','u'),('ü','u'),('ù','u'),('ç','c'),('ñ','n')]:
+        s = s.replace(a, b)
+    # remove tudo que nao seja letra, numero ou espaco
+    s = re.sub(r'[^a-z0-9 ]', ' ', s)
+    # colapsa espacos multiplos
+    s = re.sub(r'\s+', ' ', s).strip()
+    return s
+
+
+def _col(row, *nomes, default=None):
+    """Retorna o valor da primeira coluna encontrada na row.
+
+    Dois niveis de tolerancia:
+      1. Match exato (raw)           — 'Pedidos' == 'Pedidos'
+      2. Match normalizado exato     — sem acentos, sem pontuacao, sem case
+         Ex: 'RESUMO da acao' == 'Resumo da Ação'
+             'Causa raiz:'    == 'Causa Raiz'
+             'OBJETO'         == 'Objeto'
+             'Prazo p/ defesa'== 'Prazo para Defesa'  (a / vira espaco)
+
+    Retorna `default` se nenhuma coluna for encontrada.
+    """
+    # 1. match exato
+    for nome in nomes:
+        if nome in row.index:
+            return row[nome]
+
+    # 2. match normalizado exato
+    idx_norm = {_norm_col(c): c for c in row.index}
+    for nome in nomes:
+        real = idx_norm.get(_norm_col(nome))
+        if real is not None:
+            return row[real]
+
+    return default
+
+
+async def _preencher_campo_grid(page, campo_idx, valor, kind, log, campo_nome=""):
+    """Preenche o N-esimo campo dentro de pgTypeSelectField2LevelLevel1ChildGrid por indice.
+
+    Ficha Tecnica (IDs confirmados):
+      Indice 0 → Periodo do Debito  OU  Periodo da Reclamacao do Aluno
+      Indice 1 → Negativacao (select Sim/Nao)
+      kind='input' → Valor do Debito (unico input texto no grid, obj=1466)
+
+    Parametros:
+        campo_idx : 0 ou 1
+        valor     : texto da opcao (select) ou valor numerico (input)
+        kind      : 'select' | 'input'
+    """
+    try:
+        result = await page.evaluate(f"""
+            (() => {{
+                const norm = s => s.normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').toLowerCase().trim();
+                // Localiza o grid de campos extras (ID estavel: contem Level1ChildGrid)
+                // NAO usa pgTypeSelectField2Level — esse seletor bate em container pai
+                // que engloba o Objeto da Acao e retorna selects errados.
+                const grid = document.querySelector('[id*="Level1ChildGrid"]');
+                if (!grid) return 'no-grid';
+
+                if ({json.dumps(kind)} === 'select') {{
+                    const sels = Array.from(grid.querySelectorAll('select'));
+                    if (sels.length <= {campo_idx}) return 'no-select:n=' + sels.length;
+                    const sel = sels[{campo_idx}];
+                    const wantedN = norm({json.dumps(valor)});
+                    let opt = null;
+                    for (const o of sel.options) {{
+                        if (norm(o.text || o.textContent) === wantedN) {{ opt = o; break; }}
+                    }}
+                    if (!opt) {{
+                        for (const o of sel.options) {{
+                            const t = norm(o.text || o.textContent);
+                            if (t.includes(wantedN) || wantedN.includes(t)) {{ opt = o; break; }}
+                        }}
+                    }}
+                    if (!opt) {{
+                        const avail = Array.from(sel.options)
+                            .map(o => (o.text || o.textContent).trim()).slice(0, 8).join('|');
+                        return 'no-opt:' + avail;
+                    }}
+                    sel.value = opt.value;
+                    const widget = sel.closest('.ui-selectonemenu');
+                    if (widget) {{
+                        const lbl = widget.querySelector('.ui-selectonemenu-label');
+                        if (lbl) lbl.textContent = (opt.text || opt.textContent).trim();
+                    }}
+                    sel.dispatchEvent(new Event('change', {{bubbles: true}}));
+                    if (window.jQuery) jQuery(sel).trigger('change');
+                    // Dispara AJAX via widget registry PrimeFaces
+                    if (window.PrimeFaces && PrimeFaces.widgets) {{
+                        const wid = widget ? widget.id : null;
+                        for (const pw of Object.values(PrimeFaces.widgets)) {{
+                            if (!pw) continue;
+                            if ((wid && pw.id === wid) ||
+                                (pw.input && (pw.input[0] === sel ||
+                                 (typeof pw.input.is === 'function' && pw.input.is(sel))))) {{
+                                try {{ if (typeof pw.callBehavior === 'function') pw.callBehavior('change'); }} catch(e) {{}}
+                                break;
+                            }}
+                        }}
+                    }}
+                    return 'ok';
+                }} else {{
+                    // kind='input' — campo de texto livre (Valor do Debito, obj=1466)
+                    const inputs = Array.from(grid.querySelectorAll(
+                        'input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"])'
+                    ));
+                    if (inputs.length === 0) return 'no-input';
+                    const inp = inputs[0];
+                    inp.value = '';
+                    inp.dispatchEvent(new Event('input', {{bubbles: true}}));
+                    inp.value = {json.dumps(str(valor))};
+                    inp.dispatchEvent(new Event('input',  {{bubbles: true}}));
+                    inp.dispatchEvent(new Event('change', {{bubbles: true}}));
+                    if (window.jQuery) jQuery(inp).trigger('change');
+                    return 'ok';
+                }}
+            }})()
+        """)
+        if result == 'ok':
+            log.info(f"  -> campo extra [{campo_idx}] '{campo_nome}' preenchido via grid")
+            return True
+        log.warn(f"_preencher_campo_grid [{campo_idx}] '{campo_nome}': {result}")
+        return False
+    except Exception as e:
+        log.warn(f"_preencher_campo_grid [{campo_idx}] '{campo_nome}': {e}")
+        return False
+
+
 async def preencher_formulario(page, row, pasta_pdfs, log, preservar=True):
-    numero       = str(row["(Processo) Número"]).strip()
-    tipo_acao    = str(row["Tipo de Ação"]).strip()
-    procedimento = str(row["Procedimento"]).strip()
-    fase         = str(row["Fase processual"]).strip()
-    resumo       = str(row["Resumo da Ação"]).strip()
-    pedidos      = str(row["Pedidos"]).strip()
-    valor        = row["Valor da Causa"]
-    prazo        = row["Prazo para Defesa"]
+    numero = str(_col(row,
+        "(Processo) Número", "(Processo) Numero", "Processo", "Número", "Numero",
+        default="")).strip()
+    resumo = str(_col(row,
+        "Resumo da Ação", "Resumo da Acao", "Resumo",
+        default="")).strip()
+    pedidos = str(_col(row,
+        "Pedidos", "Pedido",
+        default="")).strip()
+    valor = _col(row,
+        "Valor da Causa", "Valor da causa", "Valor",
+        default=None)
+    prazo = _col(row,
+        "Prazo para Defesa", "Prazo para defesa", "Prazo",
+        default=None)
+    objeto = str(_col(row,
+        "Objeto da Ação", "Objeto da Acao", "Objeto",
+        default="")).strip()
+    causa_raiz = str(_col(row,
+        "Causa Raiz", "Causa raiz", "CausaRaiz",
+        default="")).strip()
 
-    subsidios_raw = None
-    for col in ("Deseja solicitar subsídios?", "Subsídios", "Subsidios"):
-        if col in row.index:
-            subsidios_raw = row[col]
-            break
+    subsidios_raw = _col(row,
+        "Deseja solicitar subsídios?", "Deseja solicitar subsidios?",
+        "Subsídios", "Subsidios",
+        default=None)
     subsidios = normalizar_subsidios(subsidios_raw)
-
-    juiz_raw = None
-    for col in ("Juiz", "juiz", "Juíza", "juiza", "Magistrado", "magistrado"):
-        if col in row.index:
-            juiz_raw = row[col]
-            break
-    _juiz_str = str(juiz_raw).strip() if pd.notna(juiz_raw) else ""
-    _juiz_invalidos = {"", "nan", "n/a", "-", "none", "s/n"}
-    juiz = _juiz_str if _juiz_str.lower() not in _juiz_invalidos else None
-
-    tipo_sistema = MAPA_TIPO_ACAO.get(tipo_acao, tipo_acao)
 
     # diagnostico: dump HTML do form na primeira vez
     log_dir = Path(__file__).resolve().parent / "logs"
@@ -1127,139 +1605,349 @@ async def preencher_formulario(page, row, pasta_pdfs, log, preservar=True):
     safe = re.sub(r'[^0-9a-zA-Z]', '_', numero)
     await dump_form_html(page, log_dir, safe)
 
-    # ==== Tipo de Audiencia Inicial (condicional — le Data diretamente da pagina) ====
-    # Nao vem da planilha: a RPA verifica se o campo ja esta preenchido pelo sistema.
-    # Se houver data → seleciona "Conciliacao e Mediacao - Civel" no Tipo de Audiencia.
-    data_audiencia = await page.evaluate("""
-        (() => {
-            const norm = s => (s || '').normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase().trim();
-            const all = Array.from(document.querySelectorAll('label, td, th, span, div'))
-                .filter(el => el.children.length === 0
-                    && norm(el.textContent).includes('audiencia')
-                    && norm(el.textContent).includes('inicial'));
-            for (const lbl of all) {
-                let p = lbl.parentElement;
-                for (let i = 0; i < 8 && p; i++) {
-                    const inputs = Array.from(p.querySelectorAll('input[type="text"], input[type="date"]'))
-                        .filter(inp => {
-                            const id = (inp.name || inp.id || '').toLowerCase();
-                            return !id.includes('tipo') && inp.value && inp.value.trim();
-                        });
-                    if (inputs.length > 0) return inputs[0].value.trim();
-                    p = p.parentElement;
-                }
-            }
-            return null;
-        })()
-    """)
-    if data_audiencia:
-        log.info(f"Data Audiencia Inicial detectada: '{data_audiencia}' → preenchendo Tipo de Audiencia")
-        await fill_select_robusto(
-            page,
-            ["Tipo de Audiência Inicial", "Tipo de Audiencia Inicial", "Tipo de Audiência"],
-            "Conciliação e Mediação - Cível", log,
-            fallback_id_fragment=None
-        )
-        await page.wait_for_timeout(800)
-    else:
-        log.info("Data Audiencia Inicial vazia → Tipo de Audiencia nao preenchido")
-
-    # ==== Juiz ====
-    if juiz:
-        log.info(f"Juiz: {juiz}")
-        await fill_typeahead_juiz(page, juiz, log)
-        await page.wait_for_timeout(800)
-    else:
-        log.info("Juiz: coluna ausente ou vazia na planilha - pulando")
-
-    # ==== Tipo de Acao ====
-    log.info(f"Tipo de Acao: {tipo_sistema}")
-    await fill_select_robusto(
-        page,
-        ["Tipo de ação", "Tipo de Ação", "Tipo de acao"],
-        tipo_sistema, log,
-        fallback_id_fragment="j_id_6v_2_18_2_f_5_2_1_2_1"
-    )
-    await page.wait_for_timeout(1500)
-
-    # ==== Justiça (planilha "Procedimento") ====
-    log.info(f"Justiça (da coluna Procedimento): {procedimento}")
-    await fill_select_robusto(
-        page,
-        ["Justiça", "Justica"],
-        procedimento, log,
-        fallback_id_fragment="LocationType"
-    )
-    await page.wait_for_timeout(1500)
-
-    # ==== Fase processual ====
-    log.info(f"Fase processual: {fase}")
-    ok_fase = await fill_select_robusto(
-        page,
-        ["Fase processual", "Fase"],
-        fase, log,
-        fallback_id_fragment="j_id_6v_2_18_2_h_5_3a_1"
-    )
-    if not ok_fase:
-        ok_fase = await page.evaluate(f"""
-            (() => {{
-                const norm = s => s.normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase().trim().replace(/[:*()\\s]+$/, '');
-                const target = 'fase processual';
-                const wanted = norm({json.dumps(fase)});
-                const all = Array.from(document.querySelectorAll('td, th, label, span, div'))
-                    .filter(e => e.children.length === 0 && norm(e.textContent || '').startsWith('fase'));
-                for (const el of all) {{
-                    let p = el.parentElement;
-                    let sel = null;
-                    for (let i = 0; i < 8 && p && !sel; i++) {{
-                        sel = p.querySelector('select');
-                        if (!sel) p = p.parentElement;
-                    }}
-                    if (!sel) continue;
-                    let opt = null;
-                    for (const o of sel.options) {{
-                        if (norm(o.textContent) === wanted) {{ opt = o; break; }}
-                    }}
-                    if (!opt) for (const o of sel.options) {{
-                        if (norm(o.textContent).includes(wanted)) {{ opt = o; break; }}
-                    }}
-                    if (!opt) continue;
-                    sel.value = opt.value;
-                    sel.dispatchEvent(new Event('change', {{bubbles: true}}));
-                    const w = sel.closest('.ui-selectonemenu');
-                    if (w) {{
-                        const lbl = w.querySelector('.ui-selectonemenu-label');
-                        if (lbl) lbl.textContent = opt.textContent;
-                    }}
-                    return true;
-                }}
-                return false;
-            }})()
-        """)
-        if ok_fase:
-            log.info("Fase processual preenchida via varredura ampla")
-        else:
-            log.warn("Fase processual nao preenchida!")
-    await page.wait_for_timeout(1200)
-
     # ==== Resumo da Acao (textarea) ====
     log.info("Preenchendo Resumo")
     ok, _ = await fill_input_robusto(
         page,
         ["Resumo da ação", "Resumo da Ação", "Resumo da acao"],
         resumo, log,
-        fallback_selector='textarea[name*="i_5_45"]',
+        fallback_selector=None,
         kind='textarea'
     )
     if not ok:
+        # Fallback generico: busca textarea visivel proxima do texto "Resumo" no DOM
+        try:
+            ta_id = await page.evaluate("""
+                (() => {
+                    const norm = s => s.normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').toLowerCase().trim();
+                    const labels = Array.from(document.querySelectorAll('label,span,td,th,div'))
+                        .filter(el => el.children.length === 0 && norm(el.textContent).includes('resumo'));
+                    for (const lbl of labels) {
+                        let p = lbl.parentElement;
+                        for (let i = 0; i < 8 && p; i++) {
+                            const ta = p.querySelector('textarea');
+                            if (ta) {
+                                if (!ta.id) ta.id = '_rpa_resumo_' + Math.random().toString(36).slice(2,8);
+                                return ta.id;
+                            }
+                            p = p.parentElement;
+                        }
+                    }
+                    // ultimo recurso: primeira textarea visivel do form
+                    const all = Array.from(document.querySelectorAll('textarea'))
+                        .filter(t => t.offsetParent !== null);
+                    if (all.length > 0) {
+                        if (!all[0].id) all[0].id = '_rpa_resumo_fb';
+                        return all[0].id;
+                    }
+                    return null;
+                })()
+            """)
+            if ta_id:
+                escaped = ta_id.replace(':', '\\:')
+                await page.locator(f'#{escaped}').fill(resumo)
+                log.info("Resumo preenchido via fallback JS (proximidade DOM)")
+                ok = True
+        except Exception as e:
+            log.warn(f"Resumo fallback JS: {e}")
+    if not ok:
         log.warn("Resumo nao preenchido!")
 
-    # ==== Pedidos ====
+    # ==== Pedidos (checkboxes) ====
     log.info(f"Pedidos: {pedidos}")
     await marcar_pedidos(page, [p.strip() for p in pedidos.split(",")], log)
 
+    # ==== Objeto da Acao ====
+    # NOTA: comboSelect2Level1 e' o seletor de INSTITUICAO (AGES/ANIMA/EBRADI), nao Objeto.
+    # O Objeto e' preenchido via label proximity (_selecionar_dropdown_filtrado).
+    # O value numerico varia por instituicao — usar TEXTO para decisao dos campos extras.
+    import unicodedata as _uc
+
+    obj_tipo = "desconhecido"   # debito | debito_valor | reclamacao | nenhum | desconhecido
+    obj_text = ""               # texto da opcao selecionada no Objeto da Acao
+
+    if objeto:
+        log.info(f"Objeto da Acao: {objeto}")
+        # Estrategia 1: label proximity — unica que funciona nesta pagina
+        ok_obj = await _selecionar_dropdown_filtrado(page, "Objeto da ação", objeto, log)
+        if not ok_obj:
+            ok_obj = await fill_select_robusto(
+                page,
+                ["Objeto da ação", "Objeto da Ação", "Objeto de ação", "Objeto"],
+                objeto, log,
+                fallback_id_fragment=None
+            )
+        if not ok_obj:
+            log.warn("Objeto da Acao: todas as estrategias falharam")
+
+        # Le o texto da opcao selecionada para determinar tipo de campos extras.
+        # Identifica o select pelos marcadores de opcoes.
+        obj_text = await page.evaluate(
+            "(()=>{"
+            "const norm=s=>s.normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').toLowerCase().trim();"
+            "const MK=['questoes academicas','questoes financeiras','alteracao de grade',"
+            "'covid','financiamentos','nao recorrentes','atividades complementares'];"
+            "for(const sel of document.querySelectorAll('select')){"
+            "const opts=Array.from(sel.options).map(o=>norm(o.text||o.textContent));"
+            "if(opts.some(t=>MK.some(m=>t.includes(m)))){"
+            "const idx=sel.selectedIndex;"
+            "return idx>=0?(sel.options[idx].text||sel.options[idx].textContent||'').trim():'';"
+            "}}"
+            "return '';})()"
+        )
+
+        # Determina tipo de campos extras pelo TEXTO (value numerico muda por instituicao)
+        _on = ''.join(
+            c for c in _uc.normalize('NFD', (obj_text or '').lower())
+            if _uc.category(c) != 'Mn'
+        )
+        if 'academicas' in _on or 'academica' in _on:
+            obj_tipo = 'reclamacao'
+        elif 'financeiras' in _on:
+            obj_tipo = 'debito_valor'
+        elif 'covid' in _on or ('nao' in _on and 'recorrentes' in _on):
+            obj_tipo = 'nenhum'
+        elif _on and _on not in ('', 'selecione'):
+            obj_tipo = 'debito'   # Alteracao grade, Atividades comp, Financiamentos
+        log.info(f"Objeto: '{obj_text}' tipo={obj_tipo}")
+
+        # Timeout AJAX adaptativo: Questoes Academicas e Financiamentos Bolsas carregam em ~12s
+        _LENTOS = ('financiamentos e bolsas', 'academicas')
+        ajax_timeout_ms = 18000 if any(x in _on for x in _LENTOS) else 10000
+        log.info(f"Aguardando AJAX cascata (timeout={ajax_timeout_ms // 1000}s)...")
+        try:
+            await page.wait_for_load_state("networkidle", timeout=ajax_timeout_ms)
+        except Exception:
+            pass
+
+        # Poll: aguarda a opcao especifica de Causa Raiz aparecer no DOM.
+        # Busca pelo TEXTO EXATO da opcao — unica abordagem robusta pois o widget
+        # nao tem title= estavel e ha outros selects com opcoes longas na pagina
+        # (ex: sort dropdown do upload) que enganavam as heuristicas anteriores.
+        _cr_loaded = False
+        if causa_raiz:
+            _JS_CR_FIND = f"""(()=>{{
+                const norm=s=>s.normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').toLowerCase().trim();
+                const wanted=norm({json.dumps(causa_raiz)});
+                for(const sel of document.querySelectorAll('select')){{
+                    for(const o of sel.options){{
+                        if(norm(o.text||o.textContent)===wanted) return sel.options.length;
+                    }}
+                }}
+                return 0;
+            }})()"""
+            poll_max = 36 if ajax_timeout_ms >= 15000 else 20
+            log.info(f"Aguardando AJAX Causa Raiz (tipo={obj_tipo})...")
+            for _poll in range(poll_max):
+                count = await page.evaluate(_JS_CR_FIND)
+                if count > 0:
+                    log.info(f"Causa Raiz: opcao encontrada apos poll {_poll + 1} ({count} opcoes no select)")
+                    _cr_loaded = True
+                    break
+                await page.wait_for_timeout(500)
+            if not _cr_loaded:
+                log.warn("Causa Raiz: opcao nao encontrada no tempo limite — tentando preencher assim mesmo")
+    else:
+        log.warn("Objeto da Acao: vazio na planilha - pulando")
+
+    # Lê valores dos campos condicionais da planilha (sem interacao com pagina ainda)
+    _v_pd  = _col(row, "Período do Débito", "Periodo do Debito", "Período do débito")
+    _v_neg = _col(row, "Negativação", "Negativacao", "Negação", "Negacao")
+    _v_vd  = _col(row, "Valor do Débito", "Valor do Debito", "Valor do débito")
+    _v_pr  = _col(row, "Período da Reclamação do Aluno", "Periodo da Reclamacao do Aluno",
+                  "Período da reclamação do aluno", "Periodo da reclamacao")
+
+    periodo_debito     = "" if (_v_pd  is None or str(_v_pd ).strip().lower() in ("nan","none","")) else str(_v_pd ).strip()
+    negativacao        = "" if (_v_neg is None or str(_v_neg).strip().lower() in ("nan","none","")) else str(_v_neg).strip()
+    valor_debito_raw   = _v_vd if (_v_vd is not None and pd.notna(_v_vd)) else None
+    periodo_reclamacao = "" if (_v_pr  is None or str(_v_pr ).strip().lower() in ("nan","none","")) else str(_v_pr ).strip()
+
+    # ==== Causa Raiz (ANTES dos campos do grid) ====
+    # IMPORTANTE: Causa Raiz deve ser preenchida ANTES do Periodo/Negativacao.
+    # Selecionar Causa Raiz dispara AJAX que pode re-renderizar o grid de campos extras,
+    # apagando o que foi preenchido. Preenchendo na ordem correta evita isso.
+    # IMPORTANTE: Causa Raiz deve ser preenchida ANTES do Periodo/Negativacao.
+    # Selecionar Causa Raiz dispara AJAX que re-renderiza o grid de campos extras.
+    if causa_raiz:
+        log.info(f"Causa Raiz: {causa_raiz}")
+        ok_cr = False
+
+        # Estrategia 1: localiza o widget .ui-selectonemenu pelo texto da opcao e usa
+        # CLICK REAL via Playwright (sel.value+dispatchEvent nao funciona para widgets
+        # AJAX-loaded — o servidor PrimeFaces nao reconhece a mudanca sem o handler nativo).
+        widget_id_cr = await page.evaluate(f"""
+            (() => {{
+                const norm = s => s.normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').toLowerCase().trim();
+                const wanted = norm({json.dumps(causa_raiz)});
+                // Passagem 1: match exato
+                for (const sel of document.querySelectorAll('select')) {{
+                    for (const o of sel.options) {{
+                        if (norm(o.text || o.textContent) === wanted) {{
+                            const w = sel.closest('.ui-selectonemenu');
+                            return w ? w.id : null;
+                        }}
+                    }}
+                }}
+                // Passagem 2: match parcial
+                for (const sel of document.querySelectorAll('select')) {{
+                    for (const o of sel.options) {{
+                        const t = norm(o.text || o.textContent);
+                        if ((t.includes(wanted) || wanted.includes(t)) && t.length > 4) {{
+                            const w = sel.closest('.ui-selectonemenu');
+                            return w ? w.id : null;
+                        }}
+                    }}
+                }}
+                return null;
+            }})()
+        """)
+
+        if widget_id_cr:
+            try:
+                # Usa [id="..."] para evitar escaping de ':' no seletor CSS
+                widget_loc = page.locator(f'[id="{widget_id_cr}"]')
+                await widget_loc.scroll_into_view_if_needed()
+                label_loc = widget_loc.locator('.ui-selectonemenu-label, .ui-selectonemenu-trigger').first
+                await label_loc.click(timeout=5000)
+                await page.wait_for_timeout(400)
+
+                panel_id_cr = widget_id_cr + '_panel'
+                panel_loc = page.locator(f'[id="{panel_id_cr}"]')
+                try:
+                    await panel_loc.wait_for(state='visible', timeout=5000)
+                except Exception:
+                    log.warn("Causa Raiz: painel nao ficou visivel")
+
+                clicado = await page.evaluate(f"""
+                    (() => {{
+                        const norm = s => s.normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').toLowerCase().trim();
+                        const wanted = norm({json.dumps(causa_raiz)});
+                        const panel = document.getElementById({json.dumps(panel_id_cr)});
+                        if (!panel) return 'no-panel';
+                        const items = panel.querySelectorAll('li');
+                        for (const it of items) {{
+                            const t = norm(it.textContent || '');
+                            if (t === wanted || t.includes(wanted)) {{
+                                it.click();
+                                return 'ok';
+                            }}
+                        }}
+                        const avail = Array.from(items).slice(0, 5).map(i => i.textContent.trim()).join('|');
+                        return 'no-item:' + avail;
+                    }})()
+                """)
+                if clicado == 'ok':
+                    log.info(f"Causa Raiz preenchida via click (widget ...{widget_id_cr[-25:]})")
+                    ok_cr = True
+                else:
+                    log.warn(f"Causa Raiz click no painel: {clicado}")
+                    try:
+                        await page.keyboard.press("Escape")
+                    except Exception:
+                        pass
+            except Exception as e:
+                log.warn(f"Causa Raiz click: {e}")
+        else:
+            log.warn(f"Causa Raiz: nenhum select com opcao '{causa_raiz}' encontrado no DOM")
+
+        # Estrategia 2: fill_select_robusto (span-based, aria-controls)
+        if not ok_cr:
+            ok_cr = await fill_select_robusto(
+                page, ["Causa raiz", "Causa Raiz"], causa_raiz, log, fallback_id_fragment=None
+            )
+
+        if not ok_cr:
+            log.warn(f"Causa Raiz '{causa_raiz}': nenhuma estrategia funcionou")
+
+        # Aguarda AJAX do Causa Raiz (re-renderiza o grid de campos extras com Periodo/Negativacao)
+        try:
+            await page.wait_for_load_state("networkidle", timeout=8000)
+        except Exception:
+            await page.wait_for_timeout(2000)
+    else:
+        log.warn("Causa Raiz: vazia na planilha - pulando")
+
+    # ==== Campos condicionais por tipo de Objeto (APOS Causa Raiz) ====
+    # Ficha Tecnica — pgTypeSelectField2LevelLevel1ChildGrid:
+    #   grid[select 0] = Periodo do Debito  OU  Periodo da Reclamacao do Aluno
+    #   grid[select 1] = Negativacao Sim/Nao  (debito / debito_valor)
+    #   grid[input  0] = Valor do Debito      (debito_valor apenas)
+    if obj_tipo in ('debito', 'debito_valor'):
+        if periodo_debito:
+            log.info(f"Periodo do Debito (grid[0]): {periodo_debito}")
+            ok_pd = await _preencher_campo_grid(page, 0, periodo_debito, 'select', log, "Periodo do Debito")
+            if not ok_pd:
+                await fill_select_robusto(
+                    page,
+                    ["Período do débito", "Período do Débito", "Periodo do debito"],
+                    periodo_debito, log
+                )
+            await page.wait_for_timeout(300)
+
+        if negativacao:
+            log.info(f"Negativacao (grid[1]): {negativacao}")
+            ok_neg = await _preencher_campo_grid(page, 1, negativacao, 'select', log, "Negativacao")
+            if not ok_neg:
+                await fill_select_robusto(
+                    page, ["Negativação", "Negação", "Negativacao", "Negacao"],
+                    negativacao, log
+                )
+            await page.wait_for_timeout(300)
+
+        if obj_tipo == 'debito_valor' and valor_debito_raw is not None:
+            try:
+                valor_debito_str = f"{float(valor_debito_raw):.2f}".replace(".", ",")
+            except (ValueError, TypeError):
+                valor_debito_str = str(valor_debito_raw).strip()
+            if valor_debito_str:
+                log.info(f"Valor do Debito (grid input): {valor_debito_str}")
+                ok_vd = await _preencher_campo_grid(page, 0, valor_debito_str, 'input', log, "Valor do Debito")
+                if not ok_vd:
+                    ok_vd, _ = await fill_input_robusto(
+                        page, ["Valor do débito", "Valor do Débito", "Valor do debito"],
+                        valor_debito_str, log, kind='input'
+                    )
+                if not ok_vd:
+                    log.warn("Valor do Debito nao preenchido")
+
+    elif obj_tipo == 'reclamacao':
+        if periodo_reclamacao:
+            log.info(f"Periodo da Reclamacao do Aluno (grid[0]): {periodo_reclamacao}")
+            ok_pr = await _preencher_campo_grid(page, 0, periodo_reclamacao, 'select', log, "Periodo Reclamacao")
+            if not ok_pr:
+                await fill_select_robusto(
+                    page, ["Período da reclamação do aluno", "Período da Reclamação do Aluno",
+                           "Periodo da reclamacao do aluno", "Periodo da reclamacao"],
+                    periodo_reclamacao, log
+                )
+            await page.wait_for_timeout(300)
+
+    elif obj_tipo == 'nenhum':
+        log.info("Objeto sem campos extras (Covid-19 / Nao recorrentes)")
+
+    elif objeto:
+        log.warn(f"obj_tipo desconhecido ('{obj_text}') — tentando campos por label")
+        if periodo_debito:
+            await fill_select_robusto(page, ["Período do débito", "Período do Débito"], periodo_debito, log)
+        if negativacao:
+            await fill_select_robusto(page, ["Negativação", "Negação", "Negativacao"], negativacao, log)
+        if periodo_reclamacao:
+            await fill_select_robusto(
+                page, ["Período da reclamação do aluno", "Período da Reclamação do Aluno"],
+                periodo_reclamacao, log
+            )
+        if valor_debito_raw is not None:
+            try:
+                valor_debito_str = f"{float(valor_debito_raw):.2f}".replace(".", ",")
+            except Exception:
+                valor_debito_str = str(valor_debito_raw).strip()
+            if valor_debito_str:
+                await fill_input_robusto(
+                    page, ["Valor do débito", "Valor do Débito"], valor_debito_str, log, kind='input'
+                )
+
     # ==== Valor da Causa ====
-    if pd.notna(valor):
+    if valor is not None and pd.notna(valor):
         valor_str = f"{float(valor):.2f}".replace(".", ",")
         log.info(f"Valor: {valor_str}")
         ok, _ = await fill_input_robusto(
@@ -1273,12 +1961,12 @@ async def preencher_formulario(page, row, pasta_pdfs, log, preservar=True):
             log.warn("Valor nao preenchido!")
 
     # ==== Prazo para Defesa ====
-    if pd.notna(prazo):
+    if prazo is not None and pd.notna(prazo):
         data_str = pd.Timestamp(prazo).strftime("%d/%m/%Y")
         log.info(f"Prazo: {data_str}")
         ok, sel_id = await fill_input_robusto(
             page,
-            ["Prazo para Defesa", "Prazo de Defesa", "Prazo"],
+            ["Prazo para Defesa", "Prazo para defesa", "Prazo de Defesa", "Prazo"],
             data_str, log,
             fallback_selector='input[id*="fieldDate"][type="text"], input[name*="fieldDate"]',
             kind='date'
@@ -1310,19 +1998,16 @@ async def preencher_formulario(page, row, pasta_pdfs, log, preservar=True):
         log.info(f"Upload: {os.path.basename(arquivo)}")
         await fazer_upload(page, arquivo, log)
     else:
-        # arquivo nao existe na pasta - levanta erro claro antes de salvar
         log.warn(f"PDF nao localizado na pasta para o processo {numero}")
         raise Exception(f"PDF nao localizado na pasta para o processo {numero} - anexar manualmente")
-
-
 
 async def _abrir_processo_da_pagina(page, numero, log):
     """Tenta clicar no processo na pagina atual (resultados ou dashboard).
     Retorna True se navegou para processoView.
     """
-    # prefixo numerico: "1234567" — parte antes do primeiro "-"
-    # evita problemas de formatacao (separadores, espacos)
-    prefixo = numero.split("-")[0].strip()
+    # prefixo numerico: parte antes do primeiro "-" ou "/"
+    # processos administrativos usam "/" como separador (ex: 12345/2026)
+    prefixo = re.split(r"[-/]", numero)[0].strip()
 
     estrategias = [
         # link direto para processoView
@@ -1352,7 +2037,7 @@ async def _abrir_processo_da_pagina(page, numero, log):
 
 
 async def processar(page, row, idx, total, pasta_pdfs, log, preservar=True):
-    numero = str(row["(Processo) Número"]).strip()
+    numero = str(_col(row, "(Processo) Número", "(Processo) Numero", "Processo", "Número", "Numero", default="")).strip()
     log.info(f"--- [{idx+1}/{total}] {numero} ---", step="start_case", caso=numero)
     try:
         await page.goto(f"{URL_BASE}/contenciosoDashboard.elaw", wait_until="domcontentloaded", timeout=45000)
@@ -1461,7 +2146,7 @@ async def processar(page, row, idx, total, pasta_pdfs, log, preservar=True):
             (() => {
                 // aceita PT e EN
                 const TARGETS = [
-                    'Complemento de cadastro - Escritório (Judicial)',
+                    'Complemento de cadastro - Escritório (Administrativo)',
                     'Complemento de cadastro',
                     'Complementary registration',
                     'Complementary',
@@ -1504,7 +2189,7 @@ async def processar(page, row, idx, total, pasta_pdfs, log, preservar=True):
             # fallback final: tenta clicar em qualquer botao da row
             try:
                 await page.locator(
-                    'tr:has-text("Complemento de cadastro - Escritório (Judicial)") button'
+                    'tr:has-text("Complemento de cadastro - Escritório (Administrativo)") button'
                 ).nth(2).click(timeout=5000)
             except Exception:
                 # ultimo recurso: salva diagnostico
@@ -1816,7 +2501,7 @@ async def run(cfg):
     erros = []
 
     log.info("=" * 55, step="banner")
-    log.info(f"RPA eLaw Anima - {datetime.now().strftime('%d/%m/%Y %H:%M')}", step="banner")
+    log.info(f"RPA eLaw Anima - Complemento Cadastro (Administrativo) - {datetime.now().strftime('%d/%m/%Y %H:%M')}", step="banner")
     log.info(f"Linhas {inicio+1} -> {fim} (total: {total})", step="banner")
     log.info("=" * 55, step="banner")
 
@@ -1953,7 +2638,7 @@ async def run(cfg):
                 sucesso += 1
             else:
                 erro += 1
-                erros.append(str(row["(Processo) Número"]).strip())
+                erros.append(str(_col(row, "(Processo) Número", "(Processo) Numero", "Processo", "Número", "Numero", default="???")).strip())
             feitos = sucesso + erro
             log.info(
                 f"Progresso: {feitos}/{total_casos}",

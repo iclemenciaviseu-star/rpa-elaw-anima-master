@@ -43,7 +43,7 @@
   .drop{border:1.5px dashed var(--border);background:var(--panel-2);
     border-radius:12px;padding:34px 20px;text-align:center;cursor:pointer;
     transition:border-color .2s, background .2s;}
-  .drop:hover, .drop.hover{border-color:var(--accent);background:rgba(59,130,246,.06)}
+  .drop:hover,.drop.hover{border-color:var(--accent);background:rgba(59,130,246,.06)}
   .drop .icon{font-size:28px;margin-bottom:10px;opacity:.8}
   .drop .big{font-weight:600;font-size:15px;color:var(--text)}
   .drop .sm{font-size:12px;color:var(--muted);margin-top:6px}
@@ -53,7 +53,7 @@
   .hint b{color:var(--warn);font-weight:600}
   .field{margin-bottom:14px}
   .field label{display:block;font-size:12.5px;font-weight:600;margin-bottom:6px;color:var(--soft)}
-  input[type=text],input[type=password]{width:100%;padding:11px 12px;
+  input[type=text],input[type=password],input[type=email]{width:100%;padding:11px 12px;
     background:var(--panel-2);border:1px solid var(--border);border-radius:9px;
     color:var(--text);font-size:14px;font-family:inherit;outline:none;
     transition:border-color .2s;}
@@ -73,6 +73,31 @@
   .btn.primary:hover{background:var(--accent-2)}
   .btn.danger{background:transparent;border-color:var(--err);color:var(--err)}
   .btn.ghost{background:transparent}
+
+  /* ── Activity cards ─────────────────────────────────────────────────── */
+  .act-grid{display:grid;gap:12px;margin-bottom:8px;}
+  .act-card{position:relative;background:var(--panel-2);border:2px solid var(--border);
+    border-radius:14px;padding:18px 20px;cursor:pointer;transition:all .18s;
+    user-select:none;}
+  .act-card:hover:not(.disabled){border-color:var(--accent);background:rgba(59,130,246,.06)}
+  .act-card.selected{border-color:var(--accent);background:rgba(59,130,246,.1);
+    box-shadow:0 0 0 3px rgba(59,130,246,.15)}
+  .act-card.disabled{opacity:.45;cursor:not-allowed}
+  .act-card .act-badge{display:inline-block;font-size:10px;font-weight:700;
+    letter-spacing:.08em;text-transform:uppercase;padding:2px 8px;border-radius:20px;
+    margin-bottom:8px;}
+  .act-card .act-badge.judicial{background:rgba(59,130,246,.15);color:#93c5fd}
+  .act-card .act-badge.ciencia{background:rgba(34,197,94,.15);color:#86efac}
+  .act-card .act-badge.adm{background:rgba(245,158,11,.12);color:#fcd34d}
+  .act-card .act-badge.soon{background:rgba(107,114,128,.15);color:#9ca3af}
+  .act-card .act-title{font-size:15px;font-weight:600;margin-bottom:4px}
+  .act-card .act-desc{font-size:12.5px;color:var(--muted);line-height:1.5}
+  .act-check{position:absolute;top:14px;right:14px;width:22px;height:22px;
+    border-radius:50%;border:2px solid var(--border);display:flex;align-items:center;
+    justify-content:center;font-size:12px;transition:all .18s;}
+  .act-card.selected .act-check{background:var(--accent);border-color:var(--accent);color:#fff}
+
+  /* ── Stats / KPIs ───────────────────────────────────────────────────── */
   .stat{display:grid;gap:10px;margin-top:14px;}
   .stat.cols3{grid-template-columns:repeat(3,1fr);}
   .stat.cols4{grid-template-columns:repeat(4,1fr);}
@@ -134,6 +159,11 @@
   .view{display:none}
   .view.active{display:block;animation:fade .25s ease-out}
   @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+  .no-pdfs-notice{padding:22px 18px;border:1.5px dashed var(--border);border-radius:12px;
+    text-align:center;background:var(--panel-2);color:var(--muted);}
+  .no-pdfs-notice .icon{font-size:26px;margin-bottom:8px}
+  .no-pdfs-notice strong{color:var(--soft);display:block;margin-bottom:4px;font-size:14px}
+  .no-pdfs-notice span{font-size:12.5px}
 </style>
 </head>
 <body>
@@ -143,22 +173,63 @@
       <div class="logo">EL</div>
       <div>
         <div class="title">ELAW · Automação de Agendamentos</div>
-        <div class="subtitle">anima.elaw.com.br · Complemento de Cadastro (Judicial)</div>
+        <div class="subtitle" id="headerSubtitle">anima.elaw.com.br · Selecione a atividade</div>
       </div>
     </div>
 
+    <!-- Indicador de passos (6 passos) -->
     <div class="steps">
       <div class="dot active" data-step="1">1</div><div class="bar"></div>
       <div class="dot" data-step="2">2</div><div class="bar"></div>
       <div class="dot" data-step="3">3</div><div class="bar"></div>
       <div class="dot" data-step="4">4</div><div class="bar"></div>
-      <div class="dot" data-step="5">5</div>
+      <div class="dot" data-step="5">5</div><div class="bar"></div>
+      <div class="dot" data-step="6">6</div>
     </div>
 
+    <!-- ── PASSO 1: Seleção de Atividade ─────────────────────────────── -->
     <div class="view active" data-view="1">
-      <div class="step-label">Passo 1 de 5</div>
+      <div class="step-label">Passo 1 de 6</div>
+      <h2>Selecione a Atividade</h2>
+      <p class="lead">Escolha qual automação deseja executar. Cada atividade usa uma planilha diferente.</p>
+
+      <div class="act-grid">
+        <!-- Ciência -->
+        <div class="act-card" data-atividade="ciencia" onclick="selectAtividade(this)">
+          <div class="act-check">✓</div>
+          <div class="act-badge ciencia">Ciência</div>
+          <div class="act-title">Ciência de Novo Processo</div>
+          <div class="act-desc">Localiza a tarefa de Ciência de novo processo e confirma em dois cliques. Não requer formulário nem PDFs — apenas o número do processo.</div>
+        </div>
+
+        <!-- Administrativo -->
+        <div class="act-card" data-atividade="administrativo" onclick="selectAtividade(this)">
+          <div class="act-check">✓</div>
+          <div class="act-badge adm">Administrativo</div>
+          <div class="act-title">Complemento de Cadastro — Escritório (Administrativo)</div>
+          <div class="act-desc">Preenche Resumo, Pedidos, Objeto da Ação + Causa Raiz (cascata) e campos condicionais (Período do Débito, Negativação, Valor do Débito, Período da Reclamação), Prazo e Subsídios. Requer planilha e PDFs.</div>
+        </div>
+
+        <!-- Judicial -->
+        <div class="act-card" data-atividade="judicial" onclick="selectAtividade(this)">
+          <div class="act-check">✓</div>
+          <div class="act-badge judicial">Judicial</div>
+          <div class="act-title">Complemento de Cadastro — Escritório (Judicial)</div>
+          <div class="act-desc">Preenche o formulário completo de complemento de cadastro para processos judiciais. Requer planilha com todos os campos e PDFs dos documentos.</div>
+        </div>
+      </div>
+
+      <div class="actions">
+        <div></div>
+        <button class="btn primary" id="next1" disabled>Próximo →</button>
+      </div>
+    </div>
+
+    <!-- ── PASSO 2: Planilha ──────────────────────────────────────────── -->
+    <div class="view" data-view="2">
+      <div class="step-label">Passo 2 de 6</div>
       <h2>Base de casos</h2>
-      <p class="lead">Carregue a planilha com a relação de processos.</p>
+      <p class="lead" id="lead2">Carregue a planilha com a relação de processos.</p>
       <div class="drop" id="drop1">
         <div class="icon" id="drop1-icon">+</div>
         <div class="big" id="drop1-title">Clique ou arraste o arquivo aqui</div>
@@ -173,39 +244,66 @@
         </div>
         <div id="pv-missing"></div>
       </div>
-      <div class="hint">Formatos aceitos: .xlsx, .xls, .csv. Cabeçalho detectado automaticamente.</div>
-      <div class="actions">
-        <div></div>
-        <button class="btn primary" id="next1" disabled>Próximo</button>
-      </div>
-    </div>
-
-    <div class="view" data-view="2">
-      <div class="step-label">Passo 2 de 5</div>
-      <h2>Documentos (PDFs)</h2>
-      <p class="lead">Faça upload de um ZIP com todos os PDFs dos processos. Os arquivos devem conter o número do processo no nome.</p>
-      <div class="drop" id="drop2">
-        <div class="icon" id="drop2-icon">+</div>
-        <div class="big" id="drop2-title">Clique ou arraste o ZIP aqui</div>
-        <div class="sm" id="drop2-sub">.zip com os PDFs dos processos</div>
-        <input type="file" id="file2" accept=".zip" hidden />
-      </div>
-      <div id="folderStat" style="display:none">
-        <div class="stat cols3">
-          <div class="kpi"><div class="k">PDFs</div><div class="v" id="fs-pdf">-</div></div>
-          <div class="kpi"><div class="k">ZIPs</div><div class="v" id="fs-zip">-</div></div>
-          <div class="kpi"><div class="k">Total</div><div class="v" id="fs-total">-</div></div>
+      <!-- Seletor de coluna — visível apenas para Ciência -->
+      <div id="colPickerArea" style="display:none;margin-top:14px">
+        <div class="field">
+          <label for="colPickerSel">Qual coluna contém o número do processo?</label>
+          <select id="colPickerSel" style="width:100%;padding:10px 12px;background:var(--panel-2);
+            border:1px solid var(--border);border-radius:9px;color:var(--text);font-size:14px;
+            font-family:inherit;outline:none;cursor:pointer">
+            <option value="">— selecione a coluna —</option>
+          </select>
         </div>
       </div>
-      <div class="hint">Dica: selecione os PDFs no Explorer → botão direito → Enviar para → Pasta compactada.</div>
+      <div class="hint" id="hint2">Formatos aceitos: .xlsx, .xls, .csv. Cabeçalho detectado automaticamente.</div>
       <div class="actions">
-        <button class="btn" data-back="1">Voltar</button>
-        <button class="btn primary" id="next2" disabled>Próximo</button>
+        <button class="btn" data-back="1">← Voltar</button>
+        <button class="btn primary" id="next2" disabled>Próximo →</button>
       </div>
     </div>
 
+    <!-- ── PASSO 3: PDFs (condicional) ───────────────────────────────── -->
     <div class="view" data-view="3">
-      <div class="step-label">Passo 3 de 5</div>
+      <div class="step-label">Passo 3 de 6</div>
+      <h2>Documentos (PDFs)</h2>
+
+      <!-- Judicial: upload normal -->
+      <div id="pdfUploadArea">
+        <p class="lead">Faça upload de um ZIP com todos os PDFs dos processos. Os arquivos devem conter o número do processo no nome.</p>
+        <div class="drop" id="drop2">
+          <div class="icon" id="drop2-icon">+</div>
+          <div class="big" id="drop2-title">Clique ou arraste o ZIP aqui</div>
+          <div class="sm" id="drop2-sub">.zip com os PDFs dos processos</div>
+          <input type="file" id="file2" accept=".zip" hidden />
+        </div>
+        <div id="folderStat" style="display:none">
+          <div class="stat cols3">
+            <div class="kpi"><div class="k">PDFs</div><div class="v" id="fs-pdf">-</div></div>
+            <div class="kpi"><div class="k">ZIPs</div><div class="v" id="fs-zip">-</div></div>
+            <div class="kpi"><div class="k">Total</div><div class="v" id="fs-total">-</div></div>
+          </div>
+        </div>
+        <div class="hint">Dica: selecione os PDFs no Explorer → botão direito → Enviar para → Pasta compactada.</div>
+      </div>
+
+      <!-- Ciência: sem PDFs -->
+      <div id="pdfSkipArea" style="display:none">
+        <div class="no-pdfs-notice">
+          <div class="icon">📄</div>
+          <strong>Esta atividade não requer documentos</strong>
+          <span>A atividade <b id="skipAtividadeLabel">selecionada</b> não precisa de PDFs.<br>Clique em Próximo para continuar.</span>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="btn" data-back="2">← Voltar</button>
+        <button class="btn primary" id="next3" disabled>Próximo →</button>
+      </div>
+    </div>
+
+    <!-- ── PASSO 4: Credenciais ──────────────────────────────────────── -->
+    <div class="view" data-view="4">
+      <div class="step-label">Passo 4 de 6</div>
       <h2>Credenciais do eLaw</h2>
 
       <div id="authStateBox" style="border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:14px;background:var(--panel-2)">
@@ -233,47 +331,57 @@
         <input type="email" id="microsoftEmail" placeholder="usuario@dominio.com.br" autocomplete="off" /></div>
       <div class="row2">
         <div class="field"><label>Linha inicial</label>
-          <input type="text" id="inicio" value="2" /></div>
+          <input type="text" id="inicio" value="0" /></div>
         <div class="field"><label>Linha final <span style="color:var(--muted);font-weight:400">(vazio = todas)</span></label>
           <input type="text" id="fim" placeholder="todas" /></div>
       </div>
       <label class="chk" style="margin-top:6px">
         <input type="checkbox" id="headless" /> Rodar em background (headless)
       </label>
-      <label class="chk" style="margin-top:8px">
+      <label class="chk" id="preservarChkWrap" style="margin-top:8px">
         <input type="checkbox" id="preservar" checked /> Preservar campos já preenchidos (não sobrescrever)
       </label>
       <div class="actions">
-        <button class="btn" data-back="2">Voltar</button>
-        <button class="btn primary" id="next3" disabled>Próximo</button>
+        <button class="btn" data-back="3">← Voltar</button>
+        <button class="btn primary" id="next4" disabled>Próximo →</button>
       </div>
     </div>
 
-    <div class="view" data-view="4">
-      <div class="step-label">Passo 4 de 5</div>
+    <!-- ── PASSO 5: Revisão ──────────────────────────────────────────── -->
+    <div class="view" data-view="5">
+      <div class="step-label">Passo 5 de 6</div>
       <h2>Revisão</h2>
       <p class="lead">Confira os dados antes de iniciar.</p>
-      <div class="stat cols3">
+
+      <!-- Atividade selecionada -->
+      <div style="margin-bottom:12px;padding:10px 14px;background:var(--panel-2);
+        border:1px solid var(--border);border-radius:10px;font-size:13px;display:flex;align-items:center;gap:10px;">
+        <span id="rv-act-badge" class="act-badge" style="flex:0 0 auto"></span>
+        <span id="rv-act-label" style="font-weight:600"></span>
+      </div>
+
+      <div class="stat cols3" id="rv-stats">
         <div class="kpi"><div class="k">Casos a processar</div><div class="v" id="rv-rows">-</div></div>
-        <div class="kpi"><div class="k">PDFs disponíveis</div><div class="v" id="rv-pdfs">-</div></div>
+        <div class="kpi" id="rv-pdfs-kpi"><div class="k">PDFs disponíveis</div><div class="v" id="rv-pdfs">-</div></div>
         <div class="kpi"><div class="k">Intervalo</div><div class="v" id="rv-range">-</div></div>
       </div>
       <div style="margin-top:14px;padding:12px 14px;background:var(--panel-2);
         border:1px solid var(--border);border-radius:10px;font-size:13px;line-height:1.8;">
         <div><span style="color:var(--muted)">Planilha:</span> <span id="rv-file" style="font-family:var(--mono);font-size:12px"></span></div>
-        <div><span style="color:var(--muted)">ZIP de PDFs:</span> <span id="rv-folder" style="font-family:var(--mono);font-size:12px"></span></div>
+        <div id="rv-folder-row"><span style="color:var(--muted)">ZIP de PDFs:</span> <span id="rv-folder" style="font-family:var(--mono);font-size:12px"></span></div>
         <div><span style="color:var(--muted)">Usuário:</span> <span id="rv-user" style="font-family:var(--mono);font-size:12px"></span></div>
         <div><span style="color:var(--muted)">Modo:</span> <span id="rv-mode"></span></div>
-        <div><span style="color:var(--muted)">Preservação:</span> <span id="rv-preserv"></span></div>
+        <div id="rv-preserv-row"><span style="color:var(--muted)">Preservação:</span> <span id="rv-preserv"></span></div>
       </div>
       <div class="actions">
-        <button class="btn" data-back="3">Voltar</button>
-        <button class="btn primary" id="startBtn">Iniciar RPA</button>
+        <button class="btn" data-back="4">← Voltar</button>
+        <button class="btn primary" id="startBtn">▶ Iniciar RPA</button>
       </div>
     </div>
 
-    <div class="view" data-view="5">
-      <div class="step-label">Passo 5 de 5</div>
+    <!-- ── PASSO 6: Dashboard ────────────────────────────────────────── -->
+    <div class="view" data-view="6">
+      <div class="step-label">Passo 6 de 6</div>
       <h2 id="dashTitle">Executando...</h2>
       <p class="lead" id="dashLead">Acompanhe o progresso em tempo real. Cada caso aparece na tabela abaixo conforme é processado.</p>
       <div class="stat cols4">
@@ -295,7 +403,7 @@
       </details>
       <div id="doneBanner" style="display:none"></div>
       <div class="actions">
-        <button class="btn ghost" id="backBtn">Voltar</button>
+        <button class="btn ghost" id="backBtn">← Voltar</button>
         <div style="display:flex;gap:8px">
           <button class="btn danger" id="stopBtn" style="display:none">Parar</button>
           <button class="btn" id="exportBtn" style="display:none">Exportar CSV</button>
@@ -311,13 +419,51 @@
 </div>
 
 <script>
-const state = {
-  step: 1, spreadsheet: null, pdfFolder: null, pdfZipName: null,
-  job: null, startedAt: null, timerInt: null,
-  cases: new Map(), totalCasos: 0, sucesso: 0, erro: 0,
+/* ── Estado global ──────────────────────────────────────────────── */
+const ATIVIDADES = {
+  judicial: {
+    label: 'Complemento de Cadastro - Escritório (Judicial)',
+    badge: 'Judicial', badgeClass: 'judicial',
+    needsPdfs: true,
+    hint: 'A planilha deve conter: (Processo) Número, Tipo de Ação, Procedimento, Fase processual, Resumo da Ação, Pedidos, Valor da Causa, Prazo para Defesa, Deseja solicitar subsídios?'
+  },
+  ciencia: {
+    label: 'Ciência de Novo Processo',
+    badge: 'Ciência', badgeClass: 'ciencia',
+    needsPdfs: false,
+    hint: 'A planilha deve conter apenas a coluna: (Processo) Número'
+  },
+  administrativo: {
+    label: 'Complemento de Cadastro - Escritório (Administrativo)',
+    badge: 'Administrativo', badgeClass: 'adm',
+    needsPdfs: true,
+    hint: 'Colunas obrigatórias: (Processo) Número, Resumo da Ação, Pedidos, Valor da Causa, Prazo para Defesa, Deseja solicitar subsídios?, Objeto da Ação, Causa Raiz — Opcionais (conforme Objeto): Período do Débito, Valor do Débito, Negativação, Período da Reclamação do Aluno'
+  },
 };
 
+const state = {
+  step: 1,
+  atividade: null,
+  spreadsheet: null,
+  colunaNumeroCiencia: null,
+  pdfFolder: null,
+  pdfZipName: null,
+  job: null,
+  startedAt: null,
+  timerInt: null,
+  cases: new Map(),
+  totalCasos: 0,
+  sucesso: 0,
+  erro: 0,
+};
+
+/* ── Navegação entre passos ─────────────────────────────────────── */
 function go(n){
+  // Passo 3 (PDFs): se atividade nao precisa, pula automaticamente (so ao avancar)
+  const atv = ATIVIDADES[state.atividade] || {};
+  if (n === 3 && !atv.needsPdfs && state.step < 3) { go(4); return; }
+  if (n === 3 && !atv.needsPdfs && state.step > 3) { go(2); return; }
+
   state.step = n;
   document.querySelectorAll('.view').forEach(v =>
     v.classList.toggle('active', +v.dataset.view === n));
@@ -328,13 +474,94 @@ function go(n){
   });
   document.querySelectorAll('.bar').forEach((b,i) =>
     b.classList.toggle('done', i < n - 1));
-  document.getElementById('wrap').classList.toggle('wide', n === 5);
-  if (n === 4) refreshReview();
+  document.getElementById('wrap').classList.toggle('wide', n === 6);
+  if (n === 5) refreshReview();
   window.scrollTo({top: 0, behavior: 'smooth'});
 }
+
 document.querySelectorAll('[data-back]').forEach(b =>
   b.addEventListener('click', () => go(+b.dataset.back)));
 
+/* ── Passo 1: seleção de atividade ─────────────────────────────── */
+function selectAtividade(card){
+  if (card.classList.contains('disabled')) return;
+  document.querySelectorAll('.act-card').forEach(c => c.classList.remove('selected'));
+  card.classList.add('selected');
+  state.atividade = card.dataset.atividade;
+
+  // atualiza header
+  const atv = ATIVIDADES[state.atividade];
+  if (atv) {
+    document.getElementById('headerSubtitle').textContent =
+      'anima.elaw.com.br · ' + atv.label;
+  }
+  document.getElementById('next1').disabled = false;
+}
+
+document.getElementById('next1').addEventListener('click', () => {
+  if (!state.atividade) return;
+  updateStep2ForAtividade();
+  updateStep3ForAtividade();
+  updatePreservarVisibility();
+  go(2);
+});
+
+function updateStep2ForAtividade(){
+  const atv = ATIVIDADES[state.atividade];
+  if (!atv) return;
+  document.getElementById('hint2').textContent = atv.hint;
+  // reset planilha se mudou de atividade
+  if (state.spreadsheet) {
+    state.spreadsheet = null;
+    state.colunaNumeroCiencia = null;
+    document.getElementById('next2').disabled = true;
+    document.getElementById('drop1').classList.remove('filled');
+    document.getElementById('drop1-icon').textContent = '+';
+    document.getElementById('drop1-title').textContent = 'Clique ou arraste o arquivo aqui';
+    document.getElementById('drop1-sub').textContent = '.xlsx · .xls · .csv';
+    document.getElementById('preview1').style.display = 'none';
+    document.getElementById('colPickerArea').style.display = 'none';
+    document.getElementById('colPickerSel').innerHTML = '<option value="">— selecione a coluna —</option>';
+  }
+  // mostra/oculta seletor de coluna (apenas Ciência, quando planilha ja carregada)
+  const isCiencia = state.atividade === 'ciencia';
+  if (!isCiencia) {
+    document.getElementById('colPickerArea').style.display = 'none';
+    state.colunaNumeroCiencia = null;
+  }
+}
+
+function _checkNext2Ready(){
+  if (!state.spreadsheet) { document.getElementById('next2').disabled = true; return; }
+  if (state.atividade === 'ciencia' && !state.colunaNumeroCiencia) {
+    document.getElementById('next2').disabled = true; return;
+  }
+  document.getElementById('next2').disabled = false;
+}
+
+function updateStep3ForAtividade(){
+  const atv = ATIVIDADES[state.atividade];
+  const needsPdfs = atv && atv.needsPdfs;
+  document.getElementById('pdfUploadArea').style.display = needsPdfs ? 'block' : 'none';
+  document.getElementById('pdfSkipArea').style.display  = needsPdfs ? 'none' : 'block';
+  if (!needsPdfs) {
+    const lbl = atv ? atv.label : state.atividade;
+    document.getElementById('skipAtividadeLabel').textContent = lbl;
+    document.getElementById('next3').disabled = false;
+  } else {
+    // reset pdf se voltou para judicial
+    if (!state.pdfFolder) document.getElementById('next3').disabled = true;
+  }
+}
+
+function updatePreservarVisibility(){
+  const atv = ATIVIDADES[state.atividade];
+  // preservar so faz sentido para judicial (tem formulario)
+  document.getElementById('preservarChkWrap').style.display =
+    (atv && atv.needsPdfs) ? 'flex' : 'none';
+}
+
+/* ── Passo 2: planilha ──────────────────────────────────────────── */
 const drop1 = document.getElementById('drop1');
 const file1 = document.getElementById('file1');
 drop1.addEventListener('click', () => file1.click());
@@ -364,16 +591,18 @@ async function handleFile(f){
     document.getElementById('drop1-title').textContent = f.name;
     document.getElementById('drop1-sub').textContent =
       data.rows + ' linha(s) - ' + data.columns.length + ' coluna(s)';
+
     const pr = await fetch('/api/preview', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ spreadsheet: data.path })
+      body: JSON.stringify({ spreadsheet: data.path, atividade: state.atividade || 'judicial' })
     }).then(r => r.json());
+
     document.getElementById('preview1').style.display = 'block';
     document.getElementById('pv-rows').textContent = pr.rows;
     document.getElementById('pv-cols').textContent = pr.columns.length;
     const missingEl = document.getElementById('pv-missing');
-    if (pr.missing.length) {
-      document.getElementById('pv-status').textContent = 'Atencao';
+    if (pr.missing && pr.missing.length) {
+      document.getElementById('pv-status').textContent = 'Atenção';
       document.getElementById('pv-status').style.color = 'var(--warn)';
       missingEl.innerHTML = '<div class="missing"><b>Colunas faltando:</b> ' + pr.missing.join(', ') + '</div>';
     } else {
@@ -381,16 +610,39 @@ async function handleFile(f){
       document.getElementById('pv-status').style.color = 'var(--ok)';
       missingEl.innerHTML = '';
     }
-    document.getElementById('next1').disabled = false;
+
+    // Seletor de coluna para Ciência
+    if (state.atividade === 'ciencia') {
+      const sel = document.getElementById('colPickerSel');
+      sel.innerHTML = '<option value="">— selecione a coluna —</option>';
+      (data.columns || []).forEach(col => {
+        const opt = document.createElement('option');
+        opt.value = col;
+        opt.textContent = col;
+        // pré-seleciona se o nome já parece ser de processo
+        if (col.toLowerCase().includes('processo') || col.toLowerCase().includes('número') || col.toLowerCase().includes('numero')) {
+          opt.selected = true;
+          state.colunaNumeroCiencia = col;
+        }
+        sel.appendChild(opt);
+      });
+      document.getElementById('colPickerArea').style.display = 'block';
+    }
+    _checkNext2Ready();
   } catch (err) {
     alert('Erro ao enviar planilha: ' + err.message);
     document.getElementById('drop1-icon').textContent = '+';
     document.getElementById('drop1-title').textContent = 'Clique ou arraste o arquivo aqui';
-    document.getElementById('drop1-sub').textContent = '.xlsx - .xls - .csv';
+    document.getElementById('drop1-sub').textContent = '.xlsx · .xls · .csv';
   }
 }
-document.getElementById('next1').addEventListener('click', () => go(2));
+document.getElementById('colPickerSel').addEventListener('change', e => {
+  state.colunaNumeroCiencia = e.target.value || null;
+  _checkNext2Ready();
+});
+document.getElementById('next2').addEventListener('click', () => go(3));
 
+/* ── Passo 3: PDFs ──────────────────────────────────────────────── */
 const drop2 = document.getElementById('drop2');
 const file2 = document.getElementById('file2');
 drop2.addEventListener('click', () => file2.click());
@@ -409,7 +661,7 @@ async function handleZip(f) {
   document.getElementById('drop2-title').textContent = 'Enviando...';
   const sizeMb = (f.size / 1024 / 1024).toFixed(1);
   document.getElementById('drop2-sub').textContent = f.name + ' — ' + sizeMb + ' MB — aguarde...';
-  document.getElementById('next2').disabled = true;
+  document.getElementById('next3').disabled = true;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 180_000);
   try {
@@ -429,11 +681,11 @@ async function handleZip(f) {
     document.getElementById('fs-pdf').textContent = data.pdf_count;
     document.getElementById('fs-zip').textContent = data.zip_count;
     document.getElementById('fs-total').textContent = data.total;
-    document.getElementById('next2').disabled = false;
+    document.getElementById('next3').disabled = false;
   } catch (err) {
     clearTimeout(timeout);
     const msg = err.name === 'AbortError'
-      ? 'Tempo esgotado (> 3 min). O ZIP pode ser demasiado grande — tente dividir em ZIPs menores.'
+      ? 'Tempo esgotado (> 3 min). O ZIP pode ser grande — tente dividir em ZIPs menores.'
       : 'Erro ao enviar ZIP: ' + err.message;
     alert(msg);
     document.getElementById('drop2-icon').textContent = '+';
@@ -441,10 +693,10 @@ async function handleZip(f) {
     document.getElementById('drop2-sub').textContent = '.zip com os PDFs dos processos';
   }
 }
-document.getElementById('next2').addEventListener('click', () => go(3));
+document.getElementById('next3').addEventListener('click', () => go(4));
 
-// auth state upload
-const state3 = { authLoaded: false };
+/* ── Passo 4: credenciais ───────────────────────────────────────── */
+const state4 = { authLoaded: false };
 
 async function handleAuthFile(f) {
   if (!f || !f.name.endsWith('.json')) { alert('Selecione o arquivo auth_state.json'); return; }
@@ -453,85 +705,110 @@ async function handleAuthFile(f) {
     const r = await fetch('/api/upload-auth', { method:'POST', body: fd });
     const d = await r.json();
     if (!r.ok) throw new Error(d.detail || 'Erro');
-    state3.authLoaded = true;
+    state4.authLoaded = true;
     document.getElementById('authBadge').style.display = 'inline';
     document.getElementById('authFileName').textContent = f.name + ' (' + d.cookies + ' cookies)';
     document.getElementById('authDeleteBtn').style.display = 'inline';
-    check3();
+    check4();
   } catch(e) { alert('Erro ao carregar auth_state: ' + e.message); }
 }
 
 document.getElementById('authFile').addEventListener('change', e => handleAuthFile(e.target.files[0]));
 document.getElementById('authDeleteBtn').addEventListener('click', async () => {
   await fetch('/api/upload-auth', { method:'DELETE' });
-  state3.authLoaded = false;
+  state4.authLoaded = false;
   document.getElementById('authBadge').style.display = 'none';
   document.getElementById('authFileName').textContent = '';
   document.getElementById('authDeleteBtn').style.display = 'none';
   document.getElementById('authFile').value = '';
-  check3();
+  check4();
 });
 
-// ao entrar no step 3, verifica se já há auth_state no servidor
-document.querySelector('[data-back="2"]') && (() => {
-  fetch('/api/auth-status').then(r=>r.json()).then(d => {
-    if (d.exists) {
-      state3.authLoaded = true;
-      document.getElementById('authBadge').style.display = 'inline';
-      document.getElementById('authFileName').textContent = '(já no servidor — ' + d.cookies + ' cookies)';
-      document.getElementById('authDeleteBtn').style.display = 'inline';
-      check3();
-    }
-  }).catch(()=>{});
-})();
+// verifica auth_state existente ao carregar a pagina
+fetch('/api/auth-status').then(r=>r.json()).then(d => {
+  if (d.exists) {
+    state4.authLoaded = true;
+    document.getElementById('authBadge').style.display = 'inline';
+    document.getElementById('authFileName').textContent = '(já no servidor — ' + d.cookies + ' cookies)';
+    document.getElementById('authDeleteBtn').style.display = 'inline';
+    check4();
+  }
+}).catch(()=>{});
 
-function check3(){
-  const hasAuth = state3.authLoaded;
+function check4(){
+  const hasAuth = state4.authLoaded;
   const hasCreds = document.getElementById('usuario').value.trim() &&
                    document.getElementById('senha').value;
-  document.getElementById('next3').disabled = !(hasAuth || hasCreds);
+  document.getElementById('next4').disabled = !(hasAuth || hasCreds);
 }
 ['usuario','senha'].forEach(id =>
-  document.getElementById(id).addEventListener('input', check3));
-document.getElementById('next3').addEventListener('click', () => go(4));
+  document.getElementById(id).addEventListener('input', check4));
+document.getElementById('next4').addEventListener('click', () => go(5));
 
+/* ── Passo 5: revisão ───────────────────────────────────────────── */
 function refreshReview(){
+  const atv = ATIVIDADES[state.atividade] || {};
   const rows = state.spreadsheet ? state.spreadsheet.rows : 0;
   const i = parseInt(document.getElementById('inicio').value || '0', 10) || 0;
   const fRaw = document.getElementById('fim').value.trim();
   const f = fRaw ? parseInt(fRaw, 10) : rows;
+
+  // badge de atividade
+  const badge = document.getElementById('rv-act-badge');
+  badge.textContent = atv.badge || state.atividade;
+  badge.className = 'act-badge ' + (atv.badgeClass || '');
+  document.getElementById('rv-act-label').textContent = atv.label || '';
+
   document.getElementById('rv-rows').textContent = Math.max(0, f - i);
-  document.getElementById('rv-pdfs').textContent = state.pdfFolder ? state.pdfFolder.total : '-';
-  document.getElementById('rv-range').textContent = i + ' -> ' + (fRaw || 'fim');
+  document.getElementById('rv-range').textContent = i + ' → ' + (fRaw || 'fim');
   document.getElementById('rv-file').textContent = state.spreadsheet ? state.spreadsheet.filename : '-';
-  document.getElementById('rv-folder').textContent = state.pdfZipName || (state.pdfFolder ? state.pdfFolder.path : '-');
-  document.getElementById('rv-user').textContent = document.getElementById('usuario').value || '-';
+  document.getElementById('rv-user').textContent = document.getElementById('usuario').value || '(auth_state)';
   document.getElementById('rv-mode').textContent =
-    document.getElementById('headless').checked ? 'Background (sem janela)' : 'Janela visivel do Chrome';
-  document.getElementById('rv-preserv').textContent =
-    document.getElementById('preservar').checked ? 'Sim - nao sobrescreve campos preenchidos' : 'Nao - sobrescreve tudo';
+    document.getElementById('headless').checked ? 'Background (sem janela)' : 'Janela visível do Chrome';
+
+  // PDFs (oculto para Ciência)
+  const needsPdfs = atv.needsPdfs;
+  document.getElementById('rv-pdfs-kpi').style.display  = needsPdfs ? 'block' : 'none';
+  document.getElementById('rv-folder-row').style.display = needsPdfs ? 'block' : 'none';
+  if (needsPdfs) {
+    document.getElementById('rv-pdfs').textContent = state.pdfFolder ? state.pdfFolder.total : '-';
+    document.getElementById('rv-folder').textContent = state.pdfZipName || (state.pdfFolder ? state.pdfFolder.path : '-');
+  }
+
+  // preservar (so judicial)
+  document.getElementById('rv-preserv-row').style.display = needsPdfs ? 'block' : 'none';
+  if (needsPdfs) {
+    document.getElementById('rv-preserv').textContent =
+      document.getElementById('preservar').checked ? 'Sim - não sobrescreve campos preenchidos' : 'Não - sobrescreve tudo';
+  }
 }
 
 document.getElementById('startBtn').addEventListener('click', startExecution);
 document.getElementById('stopBtn').addEventListener('click', stopRpa);
-document.getElementById('restartBtn').addEventListener('click', () => {
-  resetDashboard(); go(4);
-});
+document.getElementById('restartBtn').addEventListener('click', () => { resetDashboard(); go(5); });
 document.getElementById('exportBtn').addEventListener('click', exportCSV);
 
+['inicio','fim','headless','usuario','preservar'].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('input', refreshReview);
+});
+
+/* ── Execução ───────────────────────────────────────────────────── */
 async function startExecution(){
   resetDashboard();
-  go(5);
+  go(6);
   const msEmail = document.getElementById('microsoftEmail').value.trim();
+  const atv = ATIVIDADES[state.atividade] || {};
   const body = {
+    atividade: state.atividade || 'judicial',
     usuario: document.getElementById('usuario').value.trim(),
     senha:   document.getElementById('senha').value,
     microsoft_email: msEmail || null,
     spreadsheet: state.spreadsheet.path,
-    pasta_pdfs:  state.pdfFolder.path,
+    pasta_pdfs: (atv.needsPdfs && state.pdfFolder) ? state.pdfFolder.path : null,
+    coluna_numero: state.colunaNumeroCiencia || null,
     inicio: parseInt(document.getElementById('inicio').value || '0', 10) || 0,
-    fim:    document.getElementById('fim').value ?
-            parseInt(document.getElementById('fim').value, 10) : null,
+    fim:    document.getElementById('fim').value ? parseInt(document.getElementById('fim').value, 10) : null,
     headless: document.getElementById('headless').checked,
     preservar_campos: document.getElementById('preservar').checked,
   };
@@ -563,7 +840,7 @@ async function startExecution(){
     es.onerror = () => es.close();
   } catch (err) {
     alert('Erro ao disparar RPA: ' + err.message);
-    go(4);
+    go(5);
   }
 }
 
@@ -575,14 +852,14 @@ function resetDashboard(){
   document.getElementById('kTime').textContent = '00:00';
   document.getElementById('progBar').style.width = '0%';
   document.getElementById('tblBody').innerHTML =
-    '<div class="empty" id="tblEmpty">Aguardando inicio...</div>';
+    '<div class="empty" id="tblEmpty">Aguardando início...</div>';
   document.getElementById('console').innerHTML = '';
   document.getElementById('doneBanner').style.display = 'none';
   document.getElementById('exportBtn').style.display = 'none';
   document.getElementById('restartBtn').style.display = 'none';
   document.getElementById('dashTitle').textContent = 'Executando...';
   document.getElementById('dashLead').textContent =
-    'Acompanhe o progresso em tempo real. Cada caso aparece na tabela abaixo conforme e processado.';
+    'Acompanhe o progresso em tempo real. Cada caso aparece na tabela abaixo conforme é processado.';
   if (state.timerInt) { clearInterval(state.timerInt); state.timerInt = null; }
 }
 
@@ -594,13 +871,13 @@ function handleEvent(obj){
     upsertCase(caso, { status:'run', msg:'Processando...' });
   }
   if (step === 'case_done' && caso) {
-    upsertCase(caso, { status:'ok', msg:'Concluido com sucesso' });
+    upsertCase(caso, { status:'ok', msg:'Concluído com sucesso' });
     state.sucesso++;
     document.getElementById('kOk').textContent = state.sucesso;
   }
   if (step === 'case_error' && caso) {
     const m = (obj.msg || '').replace(/^ERRO em [^:]+:\s*/, '');
-    upsertCase(caso, { status:'err', msg: m || 'Erro durante execucao' });
+    upsertCase(caso, { status:'err', msg: m || 'Erro durante execução' });
     state.erro++;
     document.getElementById('kErr').textContent = state.erro;
   }
@@ -661,24 +938,24 @@ function finalize(returnCode){
   b.style.display = 'flex';
   if (returnCode === 0 && state.erro === 0) {
     b.className = 'done-banner ok';
-    b.innerHTML = '<b>Execucao concluida com sucesso.</b> ' + state.sucesso + ' de ' + total + ' caso(s) processados sem erro.';
-    document.getElementById('dashTitle').textContent = 'Concluido';
+    b.innerHTML = '<b>Execução concluída com sucesso.</b> ' + state.sucesso + ' de ' + total + ' caso(s) processados sem erro.';
+    document.getElementById('dashTitle').textContent = 'Concluído ✓';
   } else if (returnCode === 0) {
     b.className = 'done-banner warn';
-    b.innerHTML = '<b>Concluido com pendencias.</b> ' + state.sucesso + ' sucesso(s), ' + state.erro + ' erro(s). Confira a tabela.';
-    document.getElementById('dashTitle').textContent = 'Concluido com pendencias';
+    b.innerHTML = '<b>Concluído com pendências.</b> ' + state.sucesso + ' sucesso(s), ' + state.erro + ' erro(s). Confira a tabela.';
+    document.getElementById('dashTitle').textContent = 'Concluído com pendências';
   } else {
     b.className = 'done-banner err';
-    b.innerHTML = '<b>Processo terminou com erro</b> (codigo ' + returnCode + ').';
-    document.getElementById('dashTitle').textContent = 'Falha na execucao';
+    b.innerHTML = '<b>Processo terminou com erro</b> (código ' + returnCode + ').';
+    document.getElementById('dashTitle').textContent = 'Falha na execução';
   }
   document.getElementById('dashLead').textContent =
-    'Voce pode exportar o relatorio em CSV, executar novamente ou voltar.';
+    'Você pode exportar o relatório em CSV, executar novamente ou voltar.';
 }
 
 async function stopRpa(){
   if (!state.job) return;
-  if (!confirm('Parar a execucao agora?')) return;
+  if (!confirm('Parar a execução agora?')) return;
   await fetch('/api/stop/' + state.job, { method:'POST' });
 }
 
@@ -687,7 +964,7 @@ function exportCSV(){
   for (const entry of state.cases) {
     const n = entry[0]; const r = entry[1];
     const st = r.status === 'ok' ? 'Sucesso'
-             : r.status === 'err' ? 'Erro' : 'Em execucao';
+             : r.status === 'err' ? 'Erro' : 'Em execução';
     rows.push([r.idx, n, st, r.msg || '']);
   }
   const csv = rows.map(r =>
@@ -722,9 +999,6 @@ function escapeHtml(s){
     ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 function cssEscape(s){ return String(s).replace(/[^a-zA-Z0-9_-]/g,'_'); }
-
-['inicio','fim','headless','usuario','preservar'].forEach(id =>
-  document.getElementById(id).addEventListener('input', refreshReview));
 </script>
 </body>
 </html>

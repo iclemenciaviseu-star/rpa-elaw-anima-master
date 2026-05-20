@@ -1,5 +1,6 @@
-"""
-RPA eLaw Anima - Complemento de Cadastro (Judicial)
+﻿"""
+RPA eLaw Anima - Complemento de Cadastro - Escritório (Judicial)
+Modulo gerado a partir de rpa.py (copia identica com descricao atualizada).
 """
 from __future__ import annotations
 
